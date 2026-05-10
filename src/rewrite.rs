@@ -122,7 +122,10 @@ fn rewrite_py_line(file: &str, line: &SourceLine, report: &mut Report) -> Option
             "parallel-fallback",
             "removed Codon @par annotation in Python target; Python target is serial and cannot detect parallel races",
         );
-        return None;
+        return Some(format!(
+            "{}# codonx: removed @par; Python debug target runs this loop serially",
+            " ".repeat(line.indent)
+        ));
     }
 
     if trimmed.starts_with("@gpu.kernel") {
@@ -132,11 +135,34 @@ fn rewrite_py_line(file: &str, line: &SourceLine, report: &mut Report) -> Option
             "gpu-fallback",
             "removed Codon @gpu.kernel annotation in Python target; GPU semantics are not simulated",
         );
-        return None;
+        return Some(format!(
+            "{}# codonx: removed @gpu.kernel; GPU semantics are not simulated",
+            " ".repeat(line.indent)
+        ));
     }
 
     if trimmed.starts_with("@python") {
-        return None;
+        report.warn(
+            file,
+            line.no,
+            "python-interop",
+            "removed Codon @python annotation in Python target; Python target executes the function body directly",
+        );
+        return Some(format!(
+            "{}# codonx: removed @python; Python debug target executes this function directly",
+            " ".repeat(line.indent)
+        ));
+    }
+
+    if trimmed.starts_with("from python import ")
+        && (trimmed.contains("->") || trimmed.contains('(') || trimmed.contains(')'))
+    {
+        report.warn(
+            file,
+            line.no,
+            "unsupported-syntax",
+            "typed Python interop import is outside regex-level lowering; use #%ifdebug to provide an explicit Python import or wrapper",
+        );
     }
 
     let mut out = if let Some(import_line) = rewrite_from_python_import(&line.raw) {
@@ -154,5 +180,11 @@ fn rewrite_from_python_import(line: &str) -> Option<String> {
     let trimmed = line.trim_start();
     let indent_len = line.len() - trimmed.len();
     let rest = trimmed.strip_prefix("from python import ")?;
+    if rest.contains("->") || rest.contains('(') || rest.contains(')') {
+        return Some(format!(
+            "{}# codonx: unsupported typed Python interop; use #%ifdebug to provide a Python import/wrapper",
+            &line[..indent_len]
+        ));
+    }
     Some(format!("{}import {}", &line[..indent_len], rest))
 }

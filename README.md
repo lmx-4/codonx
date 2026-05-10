@@ -1,182 +1,140 @@
 # codonx
 
-> Status: 0.0.1 MVP / experimental. codonx is useful for early Codon-first
-> workflows, but it is not a complete Codon parser, Python parser, or semantic
-> equivalence tool.
+> Status: 0.0.2 MVP / experimental.
 
-Codon-first dual-target preprocessor. A `.codonx`/Codon-like source file can be projected to:
+codonx is a Codon-first, single-file preprocessor. It deliberately does not try
+to parse all Codon or prove Python/Codon equivalence. The 0.0.2 boundary is:
 
-- a Python debug file with runtime assertions for type/range consistency;
-- a pure Codon file that is immediately handed to the installed `codon` compiler for `run` or `build`.
+- C-style text selection with `#%ifdebug`, `#%else`, and `#%endif`.
+- A small regex-level whitelist of syntax lowering for Python debug output.
+- Basic Python runtime guards that catch obvious type/range mismatches early.
+- Thin `codon run` / `codon build` wrapping after preprocessing.
 
-codonx is intentionally a thin wrapper around Codon for release workflows. It preprocesses the input source, swaps the source path for the generated pure Codon file, and then invokes the system compiler.
+Anything outside that boundary should be isolated by an explicit
+`#%ifdebug` / `#%else` split.
 
-## Requirements
+## CLI
 
-- Rust toolchain for building codonx.
-- `python3` for `codonx check` Python syntax compilation.
-- The Codon compiler on `PATH` for `codonx run` and `codonx build`, unless `CODONX_CODON_BIN` or `--codon-bin` is used.
-
-## Install From Source
-
-```bash
-cargo build --release --locked
-```
-
-The binary is written to:
-
-```text
-target/release/codonx
-```
-
-For a local release copy:
-
-```bash
-bash scripts/build_release.sh
-```
-
-## Python Debug Output
-
-Generate a Python debug file with assertions enabled by default:
+Generate a Python debug file. Assertions are enabled by default with
+`--assert shallow`.
 
 ```bash
 codonx --dbg test.codonx
-```
-
-Default output is written next to the input as:
-
-```text
-test_dbg.py
-```
-
-You can override the output path and assertion mode:
-
-```bash
 codonx --dbg test.codonx -o build/test.py
 codonx --dbg test.codonx --assert off
-codonx --dbg test.codonx --assert shallow
-codonx --dbg test.codonx --assert full
-codonx --dbg test.codonx --report build/codonx_report.json
+codonx --dbg test.codonx --assert full --report build/codonx_report.json
 ```
 
-`shallow` is the default. It checks scalar values and container shapes without recursively walking large containers. `full` recursively checks supported containers.
-
-## Pure Codon Generation
-
-Generate the preprocessed Codon file and exit:
+Generate a pure Codon file and exit.
 
 ```bash
 codonx codon test.codonx
-```
-
-Default output is:
-
-```text
-test_pre.codon
-```
-
-Override it with:
-
-```bash
 codonx codon test.codonx -o build/test.codon
 ```
 
-## Running With Codon
-
-`codonx run` follows the shape of `codon run`. It preprocesses the source, invokes `codon run` on the generated pure Codon file, then deletes the generated file unless `--keep-pre` is set.
-
-```bash
-codonx run test.codon
-```
-
-Equivalent flow:
+Run or build with the installed Codon compiler. codonx preprocesses the input to
+`*_pre.codon`, swaps the source path passed to Codon, then deletes the
+preprocessed file unless `--keep-pre` is used.
 
 ```bash
-codonx codon test.codon -o test_pre.codon
-codon run test_pre.codon
-rm test_pre.codon
+codonx run -release test.codonx arg1
+codonx build -release -o dist/app test.codonx
+codonx --keep-pre run test.codonx
 ```
 
-Codon arguments are passed through:
+Compiler selection:
 
 ```bash
-codonx run -debug test.codon
-codonx run -release test.codon
-codonx run -release -DN=16 test.codon arg1 arg2
+CODONX_CODON_BIN=/opt/codon/bin/codon codonx run test.codonx
+codonx --codon-bin /opt/codon/bin/codon build test.codonx
 ```
 
-Preserve the generated pure Codon file:
-
-```bash
-codonx --keep-pre run -release test.codon
-```
-
-## Building With Codon
-
-`codonx build` follows the shape of `codon build`. Codon build options are passed through, including `-release`, `-debug`, `-o`, `-exe`, `-lib`, `-obj`, `-asm`, `-llvm`, and `-pyext`.
-
-```bash
-codonx build -release -o dist/app test.codon
-codonx build -obj test.codon
-codonx build -llvm test.codon
-```
-
-When `-o` is omitted, codonx supplies the output path that Codon would have derived from the original input file, so `codonx build -obj test.codon` writes `test.o` rather than `test_pre.o`.
-
-## Codon Compiler Selection
-
-By default codonx invokes `codon` directly through the shell environment path:
-
-```bash
-codon run ...
-codon build ...
-```
-
-Use `CODONX_CODON_BIN` to choose another compiler:
-
-```bash
-CODONX_CODON_BIN=/opt/codon/bin/codon codonx run test.codon
-```
-
-Or pass it explicitly:
-
-```bash
-codonx --codon-bin /opt/codon/bin/codon run test.codon
-```
-
-## Check
-
-Check directive structure, generate both targets, and run Python syntax compilation:
+Check directive structure and Python syntax:
 
 ```bash
 codonx check test.codonx
 ```
 
-## Codon CLI Compatibility Notes
+## Preprocessor Semantics
 
-Codon documentation defines `codon run file` as compile-and-run in debug mode by default, with `-debug` and `-release` selecting debug or optimized builds. Program arguments appear after the source file:
+`#%ifdebug` selects the Python debug branch. `#%else` selects the Codon branch.
+Directives are removed from output and can be nested.
 
-```bash
-codon run -release file.py arg1 arg2
+```python
+#%ifdebug
+for i in range(n):
+    work(i)
+#%else
+@par
+for i in range(n):
+    work(i)
+#%endif
 ```
 
-Codon documentation defines `codon build` as compilation to executable, shared library, object file, assembly, LLVM IR, or Python extension. `-o <file>` controls the output path; if omitted, Codon derives the output path from the input file and selected output type.
+Python debug output keeps the first loop. Codon output keeps the `@par` loop.
+Directives inside triple-quoted strings are ignored.
 
-codonx preserves those conventions by changing only the source path passed to Codon.
+## Python Syntax Lowering
 
-## Current Limits
+0.0.2 only lowers a small whitelist using line-level regex/string rules:
 
-- Single-file preprocessing is the supported 0.0.1 workflow.
-- Python debug output is a debugging projection, not a guarantee of full equivalence with Codon release behavior.
-- Parallel and GPU constructs are not simulated in Python; codonx may lower or report them, but release correctness still needs Codon-side testing.
-- Unsupported Codon-only syntax should be isolated with `#%ifdebug`, `#%else`, and `#%endif`.
-- Runtime guards are intentionally conservative and do not cover every Codon/Python semantic difference.
+- `@par` / `@par(...)`: replace the decorator with a `codonx:` comment and keep
+  the following loop serial.
+- `@gpu.kernel`: replace the decorator with a warning comment. GPU semantics are
+  not simulated.
+- `@python`: replace the decorator with a warning comment. Python debug output
+  executes the function body directly.
+- `from python import module` and `from python import module as alias`: rewrite
+  to ordinary Python `import`.
+- Codon scalar annotations `i8/u8/i16/u16/i32/u32/i64/u64` become `int`;
+  `f32/f64` become `float`.
+
+Typed Python interop declarations such as
+`from python import mod.fn(int) -> int` are outside the regex-level boundary.
+The Python target emits a comment and report warning; the source should provide
+an explicit debug branch.
+
+Unsupported syntax is not made equivalent by codonx. Use explicit branches for
+`@tuple`, `@extend`, overloads, nontrivial generics, Codon-only `match`
+extensions, OpenMP constructs, GPU code, pointer/C/LLVM interop, and anything
+else that needs real parsing or semantic analysis.
+
+## Python Runtime Guards
+
+`--assert shallow` is the default. It inserts a Python prelude plus guards for
+regex-detectable function parameters, annotated assignments, and return values.
+
+Currently guarded:
+
+- `int/i64/u64/i32/u32/i16/u16/i8/u8` with fixed-width bounds.
+- `float/f32/f64`, `bool`, and ASCII `str`.
+- `list[T]`, `set[T]`, `dict[K, V]`, and `tuple[...]` outer shapes.
+- Container elements only with `--assert full`.
+
+Unknown types soft-pass. Guards are mismatch detectors, not equivalence proofs.
+They do not simulate parallel races, GPU behavior, floating-point rounding,
+Codon overload resolution, dict/set order, or Python interop conversion.
+
+## Development Contract
+
+For 0.0.x, every new automatic lowering must be:
+
+- regex/string-level safe;
+- documented as syntax lowering, semantic guard, or explicit-maintenance only;
+- covered by tests for Python output, Codon output, report warnings, or CLI
+  passthrough as appropriate.
+
+If a feature requires AST parsing or Codon semantic knowledge, keep it out of
+automatic lowering and require `#%ifdebug` management instead.
+
+## Build And Test
+
+```bash
+cargo fmt
+cargo check --locked
+cargo test --locked
+```
 
 ## License
 
-Licensed under either of:
-
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
-- MIT license ([LICENSE-MIT](LICENSE-MIT))
-
-at your option.
+Licensed under either Apache-2.0 or MIT, at your option.
