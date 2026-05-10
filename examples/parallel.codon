@@ -1,0 +1,13 @@
+def square_all(xs: list[i32]) -> list[i32]:
+    out: list[i32] = [0 for _ in range(len(xs))]
+    #%ifdebug
+    for i in range(len(xs)):
+        out[i] = xs[i] * xs[i]
+    #%else
+    @par(schedule="dynamic", chunk_size=64)
+    for i in range(len(xs)):
+        out[i] = xs[i] * xs[i]
+    #%endif
+    return out
+
+print(square_all([1, 2, 3]))

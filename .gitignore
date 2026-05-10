@@ -1,0 +1,17 @@
+/target/
+/dist/
+
+# Cargo packaging scratch files
+/Cargo.toml.orig
+/*.crate
+
+# Editor and OS files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Local environment
+.env
+.env.*

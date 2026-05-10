@@ -1,0 +1,35 @@
+use serde::Serialize;
+use std::{fs, path::Path};
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Warning {
+    pub file: String,
+    pub line: usize,
+    pub kind: String,
+    pub message: String,
+}
+
+#[derive(Debug, Default, Clone, Serialize)]
+pub struct Report {
+    pub warnings: Vec<Warning>,
+    pub rewritten_imports: usize,
+    pub removed_parallel_annotations: usize,
+    pub inserted_guards: usize,
+}
+
+impl Report {
+    pub fn warn(&mut self, file: &str, line: usize, kind: &str, message: impl Into<String>) {
+        self.warnings.push(Warning {
+            file: file.to_string(),
+            line,
+            kind: kind.to_string(),
+            message: message.into(),
+        });
+    }
+
+    pub fn write_json(&self, path: &Path) -> anyhow::Result<()> {
+        let text = serde_json::to_string_pretty(self)?;
+        fs::write(path, text)?;
+        Ok(())
+    }
+}
