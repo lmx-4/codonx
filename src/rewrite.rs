@@ -161,7 +161,7 @@ fn rewrite_py_line(file: &str, line: &SourceLine, report: &mut Report) -> Option
             file,
             line.no,
             "unsupported-syntax",
-            "typed Python interop import is outside regex-level lowering; use #%ifdebug to provide an explicit Python import or wrapper",
+            "typed Python interop import is outside regex-level lowering; use #%ifpy/#%ifcodon to provide an explicit Python import or wrapper",
         );
     }
 
@@ -182,7 +182,7 @@ fn rewrite_from_python_import(line: &str) -> Option<String> {
     let rest = trimmed.strip_prefix("from python import ")?;
     if rest.contains("->") || rest.contains('(') || rest.contains(')') {
         return Some(format!(
-            "{}# codonx: unsupported typed Python interop; use #%ifdebug to provide a Python import/wrapper",
+            "{}# codonx: unsupported typed Python interop; use #%ifpy/#%ifcodon to provide a Python import/wrapper",
             &line[..indent_len]
         ));
     }

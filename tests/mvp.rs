@@ -38,7 +38,7 @@ fn debug_and_codon_targets_select_opposite_branches() {
         "parallel.codonx",
         r#"def square_all(xs: list[i32]) -> list[i32]:
     out: list[i32] = [0 for _ in range(len(xs))]
-    #%ifdebug
+    #%ifpy
     for i in range(len(xs)):
         out[i] = xs[i] * xs[i]
     #%else
@@ -82,7 +82,144 @@ fn debug_and_codon_targets_select_opposite_branches() {
     );
     let codon_text = fs::read_to_string(codon).unwrap();
     assert!(codon_text.contains("@par(schedule=\"dynamic\")"));
-    assert!(!codon_text.contains("#%ifdebug"));
+    assert!(!codon_text.contains("#%ifpy"));
+}
+
+#[test]
+fn ifcodon_can_put_codon_branch_first() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = write_file(
+        dir.path(),
+        "codon_first.codon",
+        r#"def work(n: i32) -> i32:
+    total: i32 = 0
+    #%ifcodon
+    @par
+    for i in range(n):
+        total = total + i
+    #%else
+    for i in range(n):
+        total = total + i
+    #%endif
+    return total
+"#,
+    );
+    let py = dir.path().join("codon_first.py");
+    let codon = dir.path().join("codon_first_pre.codon");
+
+    let out = run(&[
+        "--dbg",
+        src.to_str().unwrap(),
+        "--assert",
+        "off",
+        "-o",
+        py.to_str().unwrap(),
+    ]);
+    assert_success(&out);
+    let py_text = fs::read_to_string(py).unwrap();
+    assert!(py_text.contains("for i in range(n):"));
+    assert!(!py_text.contains("@par"));
+    assert!(!py_text.contains("#%ifcodon"));
+
+    let out = run(&[
+        "codon",
+        src.to_str().unwrap(),
+        "-o",
+        codon.to_str().unwrap(),
+    ]);
+    assert_success(&out);
+    let codon_text = fs::read_to_string(codon).unwrap();
+    assert!(codon_text.contains("@par"));
+    assert!(!codon_text.contains("#%ifcodon"));
+}
+
+#[test]
+fn ifdebug_remains_deprecated_alias_for_ifpy() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = write_file(
+        dir.path(),
+        "legacy.codon",
+        r#"#%ifdebug
+print("py")
+#%else
+print("codon")
+#%endif
+"#,
+    );
+    let py = dir.path().join("legacy.py");
+    let codon = dir.path().join("legacy_pre.codon");
+
+    let out = run(&[
+        "--dbg",
+        src.to_str().unwrap(),
+        "--assert",
+        "off",
+        "-o",
+        py.to_str().unwrap(),
+    ]);
+    assert_success(&out);
+    assert_eq!(fs::read_to_string(py).unwrap().trim(), "print(\"py\")");
+
+    let out = run(&[
+        "codon",
+        src.to_str().unwrap(),
+        "-o",
+        codon.to_str().unwrap(),
+    ]);
+    assert_success(&out);
+    assert_eq!(
+        fs::read_to_string(codon).unwrap().trim(),
+        "print(\"codon\")"
+    );
+}
+
+#[test]
+fn nested_ifpy_ifcodon_respects_inactive_parent() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = write_file(
+        dir.path(),
+        "nested.codon",
+        r#"#%ifpy
+print("py outer")
+    #%ifcodon
+    print("leak")
+    #%else
+    print("py nested else")
+    #%endif
+#%else
+print("codon outer")
+#%endif
+"#,
+    );
+    let py = dir.path().join("nested.py");
+    let codon = dir.path().join("nested_pre.codon");
+
+    let out = run(&[
+        "--dbg",
+        src.to_str().unwrap(),
+        "--assert",
+        "off",
+        "-o",
+        py.to_str().unwrap(),
+    ]);
+    assert_success(&out);
+    let py_text = fs::read_to_string(py).unwrap();
+    assert!(py_text.contains("print(\"py outer\")"));
+    assert!(py_text.contains("print(\"py nested else\")"));
+    assert!(!py_text.contains("leak"));
+    assert!(!py_text.contains("codon outer"));
+
+    let out = run(&[
+        "codon",
+        src.to_str().unwrap(),
+        "-o",
+        codon.to_str().unwrap(),
+    ]);
+    assert_success(&out);
+    let codon_text = fs::read_to_string(codon).unwrap();
+    assert!(codon_text.contains("print(\"codon outer\")"));
+    assert!(!codon_text.contains("py outer"));
+    assert!(!codon_text.contains("leak"));
 }
 
 #[cfg(unix)]
@@ -97,7 +234,7 @@ fn codon_suffix_exercises_v003_features_and_boundaries() {
 
 DOC = """
 #%define CODON_PYTHON should_not_be_collected
-#%ifdebug
+#%ifpy
 not a real directive
 #%endif
 """
@@ -110,7 +247,7 @@ def py_bridge(x: i32) -> i32:
     return x
 
 def branch_value(x: i32) -> i32:
-    #%ifdebug
+    #%ifpy
     y: i32 = x + 1
     #%else
     y: i32 = x + 2
@@ -207,7 +344,7 @@ print(sum_squares([1, 2, 3]))
     assert!(!codon_text.contains("y: i32 = x + 1"));
     assert!(!codon_text.contains("#%define CODON_PYTHON \""));
     assert!(!codon_text.contains("#%define CODON_DEBUG \""));
-    assert!(!codon_text.contains("\n    #%ifdebug"));
+    assert!(!codon_text.contains("\n    #%ifpy"));
 
     let spy = write_file(
         dir.path(),
@@ -415,12 +552,51 @@ fn codon_run_swaps_input_path_and_deletes_preprocessed_file() {
 #[test]
 fn unmatched_directives_fail_check() {
     let dir = tempfile::tempdir().unwrap();
-    let src = write_file(dir.path(), "bad.codonx", "#%ifdebug\nprint(1)\n");
+    let src = write_file(dir.path(), "bad.codonx", "#%ifpy\nprint(1)\n");
 
     let out = run(&["check", src.to_str().unwrap()]);
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("unclosed #%ifdebug"));
+    assert!(stderr.contains("unclosed conditional directive started by #%ifpy"));
+}
+
+#[test]
+fn unmatched_ifcodon_fails_check() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = write_file(dir.path(), "bad.codon", "#%ifcodon\nprint(1)\n");
+
+    let out = run(&["check", src.to_str().unwrap()]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr)
+        .contains("unclosed conditional directive started by #%ifcodon"));
+}
+
+#[test]
+fn stray_else_and_endif_fail_check() {
+    let dir = tempfile::tempdir().unwrap();
+    let stray_else = write_file(dir.path(), "stray_else.codon", "#%else\nprint(1)\n");
+    let out = run(&["check", stray_else.to_str().unwrap()]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("#%else without active conditional"));
+
+    let stray_endif = write_file(dir.path(), "stray_endif.codon", "#%endif\nprint(1)\n");
+    let out = run(&["check", stray_endif.to_str().unwrap()]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("#%endif without active conditional"));
+}
+
+#[test]
+fn duplicate_else_fails_check() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = write_file(
+        dir.path(),
+        "duplicate_else.codon",
+        "#%ifpy\nprint(1)\n#%else\nprint(2)\n#%else\nprint(3)\n#%endif\n",
+    );
+
+    let out = run(&["check", src.to_str().unwrap()]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("duplicate #%else"));
 }
 
 #[cfg(unix)]

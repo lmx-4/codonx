@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.0.5 - 2026-05-11
+
+Target directive model release.
+
+- Added `#%ifpy` and `#%ifcodon` conditional directives, both with `#%else` and `#%endif` support.
+- Kept `#%ifdebug` as a deprecated compatibility alias for `#%ifpy`.
+- Updated docs, examples, and unsupported interop guidance to prefer explicit Python/Codon target branches.
+- Generalized directive error messages for stray `#%else`, stray `#%endif`, duplicate `#%else`, and unclosed target branches.
+- Added tests for `#%ifpy`, `#%ifcodon`, nested target branches, deprecated `#%ifdebug`, and directive error boundaries.
+
 ## 0.0.4 - 2026-05-11
 
 Codon debug dump isolation release.

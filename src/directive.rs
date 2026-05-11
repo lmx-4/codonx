@@ -3,7 +3,9 @@ use crate::{error::CodonxError, source::SourceLine};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Directive {
-    IfDebug,
+    IfPy,
+    IfCodon,
+    IfDebugDeprecated,
     Else,
     Endif,
 }
@@ -14,6 +16,7 @@ struct Frame {
     if_branch_active: bool,
     in_else: bool,
     line: usize,
+    directive: Directive,
 }
 
 pub fn parse_directive(line: &SourceLine) -> Option<Directive> {
@@ -22,10 +25,30 @@ pub fn parse_directive(line: &SourceLine) -> Option<Directive> {
     }
     let t = line.trimmed.trim();
     match t {
-        "#%ifdebug" => Some(Directive::IfDebug),
+        "#%ifpy" => Some(Directive::IfPy),
+        "#%ifcodon" => Some(Directive::IfCodon),
+        "#%ifdebug" => Some(Directive::IfDebugDeprecated),
         "#%else" => Some(Directive::Else),
         "#%endif" => Some(Directive::Endif),
         _ => None,
+    }
+}
+
+fn directive_name(directive: Directive) -> &'static str {
+    match directive {
+        Directive::IfPy => "#%ifpy",
+        Directive::IfCodon => "#%ifcodon",
+        Directive::IfDebugDeprecated => "#%ifdebug",
+        Directive::Else => "#%else",
+        Directive::Endif => "#%endif",
+    }
+}
+
+fn target_selects_if_branch(directive: Directive, target: Target) -> bool {
+    match directive {
+        Directive::IfPy | Directive::IfDebugDeprecated => matches!(target, Target::Py),
+        Directive::IfCodon => matches!(target, Target::Codon),
+        Directive::Else | Directive::Endif => unreachable!("not a branch-start directive"),
     }
 }
 
@@ -53,14 +76,15 @@ pub fn select_target_lines(
     for line in lines {
         if let Some(directive) = parse_directive(line) {
             match directive {
-                Directive::IfDebug => {
+                Directive::IfPy | Directive::IfCodon | Directive::IfDebugDeprecated => {
                     let parent = current_active(&stack);
-                    let if_active = matches!(target, Target::Py);
+                    let if_active = target_selects_if_branch(directive, target);
                     stack.push(Frame {
                         parent_active: parent,
                         if_branch_active: if_active,
                         in_else: false,
                         line: line.no,
+                        directive,
                     });
                 }
                 Directive::Else => {
@@ -68,7 +92,7 @@ pub fn select_target_lines(
                         return Err(CodonxError::Directive {
                             file: file.to_string(),
                             line: line.no,
-                            message: "#%else without #%ifdebug".to_string(),
+                            message: "#%else without active conditional".to_string(),
                         });
                     };
                     if top.in_else {
@@ -85,7 +109,7 @@ pub fn select_target_lines(
                         return Err(CodonxError::Directive {
                             file: file.to_string(),
                             line: line.no,
-                            message: "#%endif without #%ifdebug".to_string(),
+                            message: "#%endif without active conditional".to_string(),
                         });
                     }
                 }
@@ -102,7 +126,10 @@ pub fn select_target_lines(
         return Err(CodonxError::Directive {
             file: file.to_string(),
             line: frame.line,
-            message: "unclosed #%ifdebug".to_string(),
+            message: format!(
+                "unclosed conditional directive started by {}",
+                directive_name(frame.directive)
+            ),
         });
     }
 

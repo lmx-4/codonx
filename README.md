@@ -1,18 +1,18 @@
 # codonx
 
-> Status: 0.0.4 MVP / experimental.
+> Status: 0.0.5 MVP / experimental.
 
 codonx is a Codon-first, single-file preprocessor. It deliberately does not try
-to parse all Codon or prove Python/Codon equivalence. The 0.0.4 boundary is:
+to parse all Codon or prove Python/Codon equivalence. The 0.0.5 boundary is:
 
-- C-style text selection with `#%ifdebug`, `#%else`, and `#%endif`.
+- C-style text selection with `#%ifpy`, `#%ifcodon`, `#%else`, and `#%endif`.
 - A small regex-level whitelist of syntax lowering for Python debug output.
 - Basic Python runtime guards that catch obvious type/range mismatches early.
 - Thin `codon run` / `codon build` wrapping after preprocessing.
 - Source-level `#%define` hooks for Codon subprocess environment setup.
 
-Anything outside that boundary should be isolated by an explicit
-`#%ifdebug` / `#%else` split.
+Anything outside that boundary should be isolated by explicit `#%ifpy` /
+`#%ifcodon` target branches.
 
 ## CLI
 
@@ -58,11 +58,12 @@ codonx check test.codonx
 
 ## Preprocessor Semantics
 
-`#%ifdebug` selects the Python debug branch. `#%else` selects the Codon branch.
-Directives are removed from output and can be nested.
+`#%ifpy` selects the Python debug branch. `#%ifcodon` selects the Codon branch.
+Both support `#%else`, and all directives are removed from output. Directives
+can be nested.
 
 ```python
-#%ifdebug
+#%ifpy
 for i in range(n):
     work(i)
 #%else
@@ -75,7 +76,23 @@ for i in range(n):
 Python debug output keeps the first loop. Codon output keeps the `@par` loop.
 Directives inside triple-quoted strings are ignored.
 
-`#%define` is also a codonx directive and is removed from both targets. 0.0.4
+`#%ifcodon` can be used when the Codon branch should appear first:
+
+```python
+#%ifcodon
+@par
+for i in range(n):
+    work(i)
+#%else
+for i in range(n):
+    work(i)
+#%endif
+```
+
+`#%ifdebug` is still accepted as a deprecated compatibility alias for `#%ifpy`.
+New code should use `#%ifpy`.
+
+`#%define` is also a codonx directive and is removed from both targets. 0.0.5
 supports two names:
 
 ```python
@@ -100,12 +117,12 @@ supports two names:
   temporary binary from the original cwd. This means dump files are redirected
   without changing the filesystem environment observed by the user program.
 
-`#%define` is intentionally not a general macro system in 0.0.4. Unknown define
+`#%define` is intentionally not a general macro system in 0.0.5. Unknown define
 names are errors.
 
 ## Python Syntax Lowering
 
-0.0.4 only lowers a small whitelist using line-level regex/string rules:
+0.0.5 only lowers a small whitelist using line-level regex/string rules:
 
 - `@par` / `@par(...)`: replace the decorator with a `codonx:` comment and keep
   the following loop serial.
@@ -154,7 +171,8 @@ For 0.0.x, every new automatic lowering must be:
   passthrough as appropriate.
 
 If a feature requires AST parsing or Codon semantic knowledge, keep it out of
-automatic lowering and require `#%ifdebug` management instead.
+automatic lowering and require explicit `#%ifpy` / `#%ifcodon` management
+instead.
 
 ## Build And Test
 

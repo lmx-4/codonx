@@ -1,6 +1,6 @@
 def square_all(xs: list[i32]) -> list[i32]:
     out: list[i32] = [0 for _ in range(len(xs))]
-    #%ifdebug
+    #%ifpy
     for i in range(len(xs)):
         out[i] = xs[i] * xs[i]
     #%else
