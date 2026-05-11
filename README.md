@@ -1,14 +1,15 @@
 # codonx
 
-> Status: 0.0.2 MVP / experimental.
+> Status: 0.0.3 MVP / experimental.
 
 codonx is a Codon-first, single-file preprocessor. It deliberately does not try
-to parse all Codon or prove Python/Codon equivalence. The 0.0.2 boundary is:
+to parse all Codon or prove Python/Codon equivalence. The 0.0.3 boundary is:
 
 - C-style text selection with `#%ifdebug`, `#%else`, and `#%endif`.
 - A small regex-level whitelist of syntax lowering for Python debug output.
 - Basic Python runtime guards that catch obvious type/range mismatches early.
 - Thin `codon run` / `codon build` wrapping after preprocessing.
+- Source-level `#%define` hooks for Codon subprocess environment setup.
 
 Anything outside that boundary should be isolated by an explicit
 `#%ifdebug` / `#%else` split.
@@ -74,9 +75,32 @@ for i in range(n):
 Python debug output keeps the first loop. Codon output keeps the `@par` loop.
 Directives inside triple-quoted strings are ignored.
 
+`#%define` is also a codonx directive and is removed from both targets. 0.0.3
+supports two names:
+
+```python
+#%define CODON_PYTHON /path/to/libpython3.12.so
+#%define CODON_DEBUG target/codon_debug
+```
+
+- `CODON_PYTHON` is injected into the `codon run` / `codon build` subprocess
+  environment. This is useful for Codon Python interop without changing the
+  system shell profile.
+- `CODON_DEBUG` is injected as an environment variable too. Relative paths are
+  resolved against the current working directory where `codonx` is invoked.
+- When `CODON_DEBUG` is defined and the Codon invocation is in debug mode
+  (default, `-debug`, or `--debug`; not `-release` / `--release`), codonx creates
+  that directory, runs Codon with that directory as the subprocess working
+  directory, and appends `-log l` if the user did not already pass a log option.
+  Codon then writes its dump files such as `_dump_typecheck.sexp`,
+  `_dump_ir.sexp`, `_dump_ir_opt.sexp`, and `_dump_llvm.ll` there.
+
+`#%define` is intentionally not a general macro system in 0.0.3. Unknown define
+names are errors.
+
 ## Python Syntax Lowering
 
-0.0.2 only lowers a small whitelist using line-level regex/string rules:
+0.0.3 only lowers a small whitelist using line-level regex/string rules:
 
 - `@par` / `@par(...)`: replace the decorator with a `codonx:` comment and keep
   the following loop serial.

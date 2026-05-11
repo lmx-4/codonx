@@ -24,16 +24,97 @@ use std::{
     process::Command as ProcessCommand,
 };
 
+#[derive(Debug, Default, Clone)]
+struct CodonxDefines {
+    codon_python: Option<String>,
+    codon_debug: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone)]
+struct Preprocessed {
+    text: String,
+    defines: CodonxDefines,
+}
+
+fn strip_optional_quotes(value: &str) -> String {
+    let value = value.trim();
+    if value.len() >= 2
+        && ((value.starts_with('"') && value.ends_with('"'))
+            || (value.starts_with('\'') && value.ends_with('\'')))
+    {
+        value[1..value.len() - 1].to_string()
+    } else {
+        value.to_string()
+    }
+}
+
+fn collect_defines(
+    file: &str,
+    lines: Vec<source::SourceLine>,
+) -> anyhow::Result<(Vec<source::SourceLine>, CodonxDefines)> {
+    let mut out = Vec::new();
+    let mut defines = CodonxDefines::default();
+
+    for line in lines {
+        if line.in_triple_string {
+            out.push(line);
+            continue;
+        }
+
+        let trimmed = line.trimmed.trim();
+        if !trimmed.starts_with("#%define") {
+            out.push(line);
+            continue;
+        }
+
+        let rest = trimmed.strip_prefix("#%define").unwrap().trim();
+        let Some((name, value)) = rest.split_once(char::is_whitespace) else {
+            bail!(
+                "malformed #%define at {}:{}: expected name and value",
+                file,
+                line.no
+            );
+        };
+        let value = strip_optional_quotes(value);
+        if value.is_empty() {
+            bail!("malformed #%define at {}:{}: empty value", file, line.no);
+        }
+
+        match name {
+            "CODON_PYTHON" => defines.codon_python = Some(value),
+            "CODON_DEBUG" => defines.codon_debug = Some(PathBuf::from(value)),
+            _ => bail!(
+                "unsupported #%define at {}:{}: only CODON_PYTHON and CODON_DEBUG are supported",
+                file,
+                line.no
+            ),
+        }
+    }
+
+    Ok((out, defines))
+}
+
+fn preprocess(
+    input: &Path,
+    target: Target,
+    assert_mode: AssertArg,
+    report: &mut Report,
+) -> anyhow::Result<Preprocessed> {
+    let file = input.display().to_string();
+    let lines = read_source(input).with_context(|| format!("failed to read {}", file))?;
+    let (lines, defines) = collect_defines(&file, lines)?;
+    let selected = select_target_lines(&file, &lines, target)?;
+    let text = rewrite_lines(&file, &selected, target, assert_mode, report);
+    Ok(Preprocessed { text, defines })
+}
+
 fn emit_to_string(
     input: &Path,
     target: Target,
     assert_mode: AssertArg,
     report: &mut Report,
 ) -> anyhow::Result<String> {
-    let file = input.display().to_string();
-    let lines = read_source(input).with_context(|| format!("failed to read {}", file))?;
-    let selected = select_target_lines(&file, &lines, target)?;
-    Ok(rewrite_lines(&file, &selected, target, assert_mode, report))
+    Ok(preprocess(input, target, assert_mode, report)?.text)
 }
 
 fn write_or_stdout(output: Option<PathBuf>, text: &str) -> anyhow::Result<()> {
@@ -129,6 +210,32 @@ fn has_output_arg(args: &[String]) -> bool {
     args.iter().any(|a| a == "-o" || a.starts_with("-o="))
 }
 
+fn has_log_dump_arg(args: &[String]) -> bool {
+    args.windows(2)
+        .any(|w| w[0] == "-log" && w[1].contains('l'))
+        || args.iter().any(|a| a == "-log=l" || a == "--log=l")
+}
+
+fn is_debug_mode(args: &[String], input_idx: usize) -> bool {
+    !args[..input_idx]
+        .iter()
+        .any(|a| a == "-release" || a == "--release")
+}
+
+fn absolute_path(path: &Path) -> anyhow::Result<PathBuf> {
+    if path.is_absolute() {
+        Ok(path.to_path_buf())
+    } else {
+        Ok(std::env::current_dir()?.join(path))
+    }
+}
+
+fn resolve_debug_dir(path: &Path) -> anyhow::Result<PathBuf> {
+    let dir = absolute_path(path)?;
+    fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
+
 fn build_output_for_original(input: &Path, args: &[String]) -> PathBuf {
     let stem = input
         .file_stem()
@@ -152,16 +259,16 @@ fn build_output_for_original(input: &Path, args: &[String]) -> PathBuf {
     }
 }
 
-fn write_preprocessed_codon(input: &Path, output: &Path) -> anyhow::Result<()> {
+fn write_preprocessed_codon(input: &Path, output: &Path) -> anyhow::Result<CodonxDefines> {
     let mut rep = Report::default();
-    let text = emit_to_string(input, Target::Codon, AssertArg::Off, &mut rep)?;
+    let preprocessed = preprocess(input, Target::Codon, AssertArg::Off, &mut rep)?;
     if let Some(parent) = output.parent() {
         if !parent.as_os_str().is_empty() {
             fs::create_dir_all(parent)?;
         }
     }
-    fs::write(output, text)?;
-    Ok(())
+    fs::write(output, preprocessed.text)?;
+    Ok(preprocessed.defines)
 }
 
 fn invoke_codon(
@@ -178,20 +285,45 @@ fn invoke_codon(
     }
 
     let pre = default_codon_output(&input);
-    write_preprocessed_codon(&input, &pre)?;
+    let defines = write_preprocessed_codon(&input, &pre)?;
 
     let mut args = original_args.to_vec();
-    args[input_idx] = pre.display().to_string();
+    args[input_idx] = absolute_path(&pre)?.display().to_string();
 
     if subcommand == "build" && !has_output_arg(&args) {
-        let output = build_output_for_original(&input, original_args);
+        let output = absolute_path(&build_output_for_original(&input, original_args))?;
         args.insert(input_idx, output.display().to_string());
         args.insert(input_idx, "-o".to_string());
     }
 
-    let status = ProcessCommand::new(codon_bin(cli))
-        .arg(subcommand)
-        .args(&args)
+    let debug_dir = if is_debug_mode(original_args, input_idx) {
+        defines
+            .codon_debug
+            .as_deref()
+            .map(resolve_debug_dir)
+            .transpose()?
+    } else {
+        None
+    };
+
+    if debug_dir.is_some() && !has_log_dump_arg(&args) {
+        args.insert(input_idx, "l".to_string());
+        args.insert(input_idx, "-log".to_string());
+    }
+
+    let mut cmd = ProcessCommand::new(codon_bin(cli));
+    cmd.arg(subcommand).args(&args);
+    if let Some(path) = defines.codon_python.as_deref() {
+        cmd.env("CODON_PYTHON", path);
+    }
+    if let Some(dir) = debug_dir.as_deref() {
+        cmd.env("CODON_DEBUG", dir);
+        cmd.current_dir(dir);
+    } else if let Some(path) = defines.codon_debug.as_deref() {
+        cmd.env("CODON_DEBUG", absolute_path(path)?);
+    }
+
+    let status = cmd
         .status()
         .with_context(|| format!("failed to run codon {}", subcommand))?;
 
@@ -248,7 +380,7 @@ fn main() -> anyhow::Result<()> {
                 .clone()
                 .or_else(|| cli.output.clone())
                 .unwrap_or_else(|| default_codon_output(input));
-            write_preprocessed_codon(input, &output)?;
+            let _defines = write_preprocessed_codon(input, &output)?;
         }
         Some(Command::Run { args }) => {
             let code = invoke_codon(&cli, "run", args, cli.keep_pre)?;

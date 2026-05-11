@@ -1,0 +1,13 @@
+#%define CODON_PYTHON /home/li/miniconda3/envs/FCN_set_lines/lib/libpython3.12.so
+#%define CODON_DEBUG target/codon_debug
+
+from python import math as pymath
+
+
+def add(a: int, b: int) -> int:
+    c: int = a + b
+    return c
+
+
+print(add(1, 2))
+print(pymath.sqrt(16))

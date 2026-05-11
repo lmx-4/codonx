@@ -4,6 +4,9 @@ use std::{
     process::Command,
 };
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 fn bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_codonx"))
 }
@@ -196,4 +199,157 @@ fn unmatched_directives_fail_check() {
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("unclosed #%ifdebug"));
+}
+
+#[cfg(unix)]
+#[test]
+fn defines_are_stripped_and_injected_into_codon_debug_process() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = write_file(
+        dir.path(),
+        "defines.codonx",
+        r#"#%define CODON_PYTHON /tmp/libpython-test.so
+#%define CODON_DEBUG target/codonx_test_debug_dumps
+print(1)
+"#,
+    );
+    let spy = write_file(
+        dir.path(),
+        "spy.sh",
+        r#"#!/usr/bin/env bash
+printf 'PWD=%s\n' "$PWD"
+printf 'CODON_PYTHON=%s\n' "$CODON_PYTHON"
+printf 'CODON_DEBUG=%s\n' "$CODON_DEBUG"
+printf 'ARGS=%s\n' "$*"
+"#,
+    );
+    let mut perms = fs::metadata(&spy).unwrap().permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&spy, perms).unwrap();
+
+    let codon = dir.path().join("defines.codon");
+    let out = run(&[
+        "codon",
+        src.to_str().unwrap(),
+        "-o",
+        codon.to_str().unwrap(),
+    ]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let codon_text = fs::read_to_string(codon).unwrap();
+    assert!(!codon_text.contains("#%define"));
+    assert!(codon_text.contains("print(1)"));
+
+    let out = run(&[
+        "--codon-bin",
+        spy.to_str().unwrap(),
+        "--keep-pre",
+        "run",
+        src.to_str().unwrap(),
+    ]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let debug_dir = std::env::current_dir()
+        .unwrap()
+        .join("target/codonx_test_debug_dumps");
+    assert!(stdout.contains("CODON_PYTHON=/tmp/libpython-test.so"));
+    assert!(stdout.contains(&format!("CODON_DEBUG={}", debug_dir.display())));
+    assert!(stdout.contains(&format!("PWD={}", debug_dir.display())));
+    assert!(stdout.contains("-log l"));
+    assert!(stdout.contains("defines_pre.codon"));
+}
+
+#[cfg(unix)]
+#[test]
+fn codon_debug_define_does_not_add_log_in_release_mode() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = write_file(
+        dir.path(),
+        "release_defines.codonx",
+        r#"#%define CODON_DEBUG target/codonx_test_release_debug_dumps
+print(1)
+"#,
+    );
+    let spy = write_file(
+        dir.path(),
+        "spy.sh",
+        r#"#!/usr/bin/env bash
+printf 'PWD=%s\n' "$PWD"
+printf 'CODON_DEBUG=%s\n' "$CODON_DEBUG"
+printf 'ARGS=%s\n' "$*"
+"#,
+    );
+    let mut perms = fs::metadata(&spy).unwrap().permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&spy, perms).unwrap();
+
+    let out = run(&[
+        "--codon-bin",
+        spy.to_str().unwrap(),
+        "run",
+        "-release",
+        src.to_str().unwrap(),
+    ]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let debug_dir = std::env::current_dir()
+        .unwrap()
+        .join("target/codonx_test_release_debug_dumps");
+    assert!(stdout.contains(&format!("CODON_DEBUG={}", debug_dir.display())));
+    assert!(!stdout.contains("-log l"));
+    assert!(!stdout.contains(&format!("PWD={}", debug_dir.display())));
+}
+
+#[cfg(unix)]
+#[test]
+fn program_argument_named_release_does_not_disable_debug_dump() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = write_file(
+        dir.path(),
+        "program_args.codonx",
+        r#"#%define CODON_DEBUG target/codonx_test_program_arg_debug_dumps
+print(1)
+"#,
+    );
+    let spy = write_file(
+        dir.path(),
+        "spy.sh",
+        r#"#!/usr/bin/env bash
+printf 'PWD=%s\n' "$PWD"
+printf 'ARGS=%s\n' "$*"
+"#,
+    );
+    let mut perms = fs::metadata(&spy).unwrap().permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&spy, perms).unwrap();
+
+    let out = run(&[
+        "--codon-bin",
+        spy.to_str().unwrap(),
+        "run",
+        src.to_str().unwrap(),
+        "-release",
+    ]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let debug_dir = std::env::current_dir()
+        .unwrap()
+        .join("target/codonx_test_program_arg_debug_dumps");
+    assert!(stdout.contains(&format!("PWD={}", debug_dir.display())));
+    assert!(stdout.contains("-log l"));
 }

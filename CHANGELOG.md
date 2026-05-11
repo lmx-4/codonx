@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.0.3 - 2026-05-11
+
+Small Codon debug workflow release.
+
+- Added source-level `#%define CODON_PYTHON <path>` and `#%define CODON_DEBUG <relative-or-absolute-dir>` directives.
+- Stripped supported `#%define` directives from Python and Codon outputs.
+- Injected `CODON_PYTHON` and `CODON_DEBUG` into `codon run` / `codon build` subprocess environments.
+- When `CODON_DEBUG` is defined in debug mode, codonx creates the target directory, runs Codon from that directory, and appends `-log l` to generate Codon dump files unless a log option is already present.
+- Added tests for define stripping, environment injection, debug dump argument insertion, and release-mode behavior.
+
 ## 0.0.2 - 2026-05-10
 
 MVP boundary tightening release.

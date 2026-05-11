@@ -1,15 +1,15 @@
-//! Python semantic guard generation for codonx 0.0.1.
+//! Python semantic guard generation for codonx 0.0.x.
 //!
 //! This module emits Python runtime assertions that make the Python debug target
 //! fail earlier when a value violates the intended Codon type semantics.
 //!
-//! Scope of 0.0.1:
+//! Scope of 0.0.x:
 //! - primitive scalar guards: int/i8/u8/.../i64/u64, float/f32/f64, bool, str
 //! - shallow/full guards for list[T], set[T], dict[K, V], tuple[T1, T2, ...]
 //! - helper prelude inserted into generated Python target
 //! - function-parameter/local-variable/return-value guard snippets
 //!
-//! Non-goals of 0.0.1:
+//! Non-goals of 0.0.x:
 //! - full Codon type parser
 //! - exact GPU/parallel simulation
 //! - pointer/LLVM/C-interop semantics
@@ -34,7 +34,7 @@ pub fn guards_enabled(mode: AssertArg) -> bool {
 /// Keep this helper intentionally conservative. Python's bool is a subclass of
 /// int, so integer guards use `type(v) is int` rather than `isinstance(v, int)`.
 pub fn python_guard_prelude() -> String {
-    r#"# --- codonx 0.0.1 semantic guard prelude ---
+    r#"# --- codonx semantic guard prelude ---
 def __codonx_type_error(name, ty, value):
     raise AssertionError(
         f"codonx guard failed: {name} expected {ty}, got "
@@ -165,7 +165,7 @@ def __codonx_assert_value(value, ty, name="<value>", full=False):
                 __codonx_assert_value(value[i], item_ty, f"{name}[{i}]", full)
         return value
 
-    # Unknown or unsupported types are not guessed. 0.0.1 keeps them as a soft
+    # Unknown or unsupported types are not guessed. codonx keeps them as a soft
     # pass to avoid false positives; later versions may support strict mode.
     return value
 # --- end codonx semantic guard prelude ---
