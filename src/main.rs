@@ -22,6 +22,7 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     process::Command as ProcessCommand,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 #[derive(Debug, Default, Clone)]
@@ -236,6 +237,23 @@ fn resolve_debug_dir(path: &Path) -> anyhow::Result<PathBuf> {
     Ok(dir)
 }
 
+fn unique_debug_exe_path(debug_dir: &Path) -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    debug_dir.join(format!("codonx_run_{}_{}", std::process::id(), nanos))
+}
+
+fn apply_codonx_envs(cmd: &mut ProcessCommand, defines: &CodonxDefines, debug_dir: Option<&Path>) {
+    if let Some(path) = defines.codon_python.as_deref() {
+        cmd.env("CODON_PYTHON", path);
+    }
+    if let Some(dir) = debug_dir {
+        cmd.env("CODON_DEBUG", dir);
+    }
+}
+
 fn build_output_for_original(input: &Path, args: &[String]) -> PathBuf {
     let stem = input
         .file_stem()
@@ -277,7 +295,7 @@ fn invoke_codon(
     original_args: &[String],
     keep_pre: bool,
 ) -> anyhow::Result<i32> {
-    let input_idx = find_codon_input_arg(original_args)
+    let mut input_idx = find_codon_input_arg(original_args)
         .ok_or_else(|| anyhow!("codonx {} requires a source file argument", subcommand))?;
     let input = PathBuf::from(&original_args[input_idx]);
     if input.as_os_str() == "-" {
@@ -309,18 +327,57 @@ fn invoke_codon(
     if debug_dir.is_some() && !has_log_dump_arg(&args) {
         args.insert(input_idx, "l".to_string());
         args.insert(input_idx, "-log".to_string());
+        input_idx += 2;
+    }
+
+    if subcommand == "run" {
+        if let Some(debug_dir) = debug_dir.as_deref() {
+            let exe = unique_debug_exe_path(debug_dir);
+            let program_args = args[input_idx + 1..].to_vec();
+            let mut build_args = args[..input_idx].to_vec();
+            build_args.push("-o".to_string());
+            build_args.push(exe.display().to_string());
+            build_args.push(args[input_idx].clone());
+
+            let mut build_cmd = ProcessCommand::new(codon_bin(cli));
+            build_cmd.arg("build").args(&build_args);
+            apply_codonx_envs(&mut build_cmd, &defines, Some(debug_dir));
+            build_cmd.current_dir(debug_dir);
+            let build_status = build_cmd
+                .status()
+                .with_context(|| "failed to run codon build for debug run")?;
+
+            if !build_status.success() {
+                if !keep_pre {
+                    let _ = fs::remove_file(&pre);
+                }
+                return Ok(build_status.code().unwrap_or(1));
+            }
+
+            let mut run_cmd = ProcessCommand::new(&exe);
+            run_cmd.args(&program_args);
+            apply_codonx_envs(&mut run_cmd, &defines, Some(debug_dir));
+            let run_status = run_cmd
+                .status()
+                .with_context(|| format!("failed to run {}", exe.display()))?;
+            let _ = fs::remove_file(&exe);
+            if !keep_pre {
+                let _ = fs::remove_file(&pre);
+            }
+            return Ok(run_status.code().unwrap_or(1));
+        }
     }
 
     let mut cmd = ProcessCommand::new(codon_bin(cli));
     cmd.arg(subcommand).args(&args);
-    if let Some(path) = defines.codon_python.as_deref() {
-        cmd.env("CODON_PYTHON", path);
-    }
     if let Some(dir) = debug_dir.as_deref() {
-        cmd.env("CODON_DEBUG", dir);
+        apply_codonx_envs(&mut cmd, &defines, Some(dir));
         cmd.current_dir(dir);
     } else if let Some(path) = defines.codon_debug.as_deref() {
         cmd.env("CODON_DEBUG", absolute_path(path)?);
+        apply_codonx_envs(&mut cmd, &defines, None);
+    } else {
+        apply_codonx_envs(&mut cmd, &defines, None);
     }
 
     let status = cmd

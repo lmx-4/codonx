@@ -1,9 +1,9 @@
 # codonx
 
-> Status: 0.0.3 MVP / experimental.
+> Status: 0.0.4 MVP / experimental.
 
 codonx is a Codon-first, single-file preprocessor. It deliberately does not try
-to parse all Codon or prove Python/Codon equivalence. The 0.0.3 boundary is:
+to parse all Codon or prove Python/Codon equivalence. The 0.0.4 boundary is:
 
 - C-style text selection with `#%ifdebug`, `#%else`, and `#%endif`.
 - A small regex-level whitelist of syntax lowering for Python debug output.
@@ -75,7 +75,7 @@ for i in range(n):
 Python debug output keeps the first loop. Codon output keeps the `@par` loop.
 Directives inside triple-quoted strings are ignored.
 
-`#%define` is also a codonx directive and is removed from both targets. 0.0.3
+`#%define` is also a codonx directive and is removed from both targets. 0.0.4
 supports two names:
 
 ```python
@@ -90,17 +90,22 @@ supports two names:
   resolved against the current working directory where `codonx` is invoked.
 - When `CODON_DEBUG` is defined and the Codon invocation is in debug mode
   (default, `-debug`, or `--debug`; not `-release` / `--release`), codonx creates
-  that directory, runs Codon with that directory as the subprocess working
-  directory, and appends `-log l` if the user did not already pass a log option.
-  Codon then writes its dump files such as `_dump_typecheck.sexp`,
-  `_dump_ir.sexp`, `_dump_ir_opt.sexp`, and `_dump_llvm.ll` there.
+  that directory and appends `-log l` if the user did not already pass a log
+  option.
+- For `codonx build`, Codon is invoked from the debug directory so Codon writes
+  dump files such as `_dump_typecheck.sexp`, `_dump_ir.sexp`,
+  `_dump_ir_opt.sexp`, and `_dump_llvm.ll` there.
+- For `codonx run`, codonx keeps program runtime cwd stable by splitting the
+  operation into a debug-directory `codon build` followed by executing the
+  temporary binary from the original cwd. This means dump files are redirected
+  without changing the filesystem environment observed by the user program.
 
-`#%define` is intentionally not a general macro system in 0.0.3. Unknown define
+`#%define` is intentionally not a general macro system in 0.0.4. Unknown define
 names are errors.
 
 ## Python Syntax Lowering
 
-0.0.3 only lowers a small whitelist using line-level regex/string rules:
+0.0.4 only lowers a small whitelist using line-level regex/string rules:
 
 - `@par` / `@par(...)`: replace the decorator with a `codonx:` comment and keep
   the following loop serial.
