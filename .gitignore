@@ -1,17 +1,42 @@
+# Rust build outputs
 /target/
 /dist/
 
-# Cargo packaging scratch files
-/Cargo.toml.orig
-/*.crate
+# codonx generated files
+*_pre.codon
+*_dbg.py
+*_codon.py
+*.codonx.report.json
+codonx_report.json
+report.json
 
-# Editor and OS files
-.DS_Store
-Thumbs.db
+# Codon debug dump outputs
+target/codonx_*_debug*/
+codonx_debug*/
+_dump_*.sexp
+_dump_*.ll
+_dump_llvm.ll
+_dump_ir*.sexp
+_dump_typecheck.sexp
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.orig
 *.swp
-*.swo
-*~
+.DS_Store
 
-# Local environment
+# IDE/editor
+.vscode/
+.idea/
+*.iml
+
+# Python cache from generated debug targets
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local env files
 .env
 .env.*
