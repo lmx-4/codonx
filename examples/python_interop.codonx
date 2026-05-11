@@ -1,0 +1,9 @@
+# This example demonstrates Codon Python interop intent.
+# The Python target rewrites simple `from python import ...` to ordinary import.
+
+from python import math as pymath
+
+def root(x: f64) -> f64:
+    return pymath.sqrt(x)
+
+print(root(9.0))
