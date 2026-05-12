@@ -18,6 +18,10 @@ pub struct Report {
     pub unknown_guard_types: usize,
     pub unchecked_dynamic_types: usize,
     pub semantic_warnings: usize,
+    pub lowered_casts: usize,
+    pub erased_generics: usize,
+    pub interop_warnings: usize,
+    pub unsupported_regex_boundaries: usize,
 }
 
 impl Report {
@@ -64,6 +68,28 @@ impl Report {
         message: impl Into<String>,
     ) {
         self.semantic_warnings += 1;
+        self.warn(file, line, kind, message);
+    }
+
+    pub fn warn_interop(
+        &mut self,
+        file: &str,
+        line: usize,
+        kind: &str,
+        message: impl Into<String>,
+    ) {
+        self.interop_warnings += 1;
+        self.warn(file, line, kind, message);
+    }
+
+    pub fn warn_unsupported_regex_boundary(
+        &mut self,
+        file: &str,
+        line: usize,
+        kind: &str,
+        message: impl Into<String>,
+    ) {
+        self.unsupported_regex_boundaries += 1;
         self.warn(file, line, kind, message);
     }
 

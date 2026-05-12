@@ -48,6 +48,42 @@ pub fn translate_annotations_in_line(line: &str) -> String {
         .unwrap()
         .replace_all(&out, "float")
         .to_string();
+    out = Regex::new(r"\bOptional\[[^\]]+\]")
+        .unwrap()
+        .replace_all(&out, "object")
+        .to_string();
+    out = Regex::new(r"\bUnion\[[^\]]+\]")
+        .unwrap()
+        .replace_all(&out, "object")
+        .to_string();
+    out = Regex::new(r"\bLiteral\[\s*int\s*\]")
+        .unwrap()
+        .replace_all(&out, "int")
+        .to_string();
+    out = Regex::new(r"\bLiteral\[\s*str\s*\]")
+        .unwrap()
+        .replace_all(&out, "str")
+        .to_string();
+    out = Regex::new(r"\bLiteral\[\s*bool\s*\]")
+        .unwrap()
+        .replace_all(&out, "bool")
+        .to_string();
+    out = Regex::new(r"\bNoneType\b")
+        .unwrap()
+        .replace_all(&out, "object")
+        .to_string();
+    out = Regex::new(r"\bPtr\[[^\]]+\]")
+        .unwrap()
+        .replace_all(&out, "object")
+        .to_string();
+    out = Regex::new(r"\bcobj\b")
+        .unwrap()
+        .replace_all(&out, "object")
+        .to_string();
+    out = Regex::new(r"\bT\b")
+        .unwrap()
+        .replace_all(&out, "object")
+        .to_string();
     out
 }
 
@@ -75,7 +111,7 @@ pub fn split_top_level_commas(s: &str) -> Vec<String> {
 
 pub fn parse_def_signature(line: &str, indent: usize) -> Option<DefSig> {
     let re = Regex::new(
-        r"^\s*def\s+[A-Za-z_][A-Za-z0-9_]*\s*\((?P<params>.*)\)\s*(?:->\s*(?P<ret>[^:]+))?:",
+        r"^\s*def\s+[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]+\])?\s*\((?P<params>.*)\)\s*(?:->\s*(?P<ret>[^:]+))?:",
     )
     .ok()?;
     let caps = re.captures(line)?;
@@ -97,6 +133,9 @@ pub fn parse_def_signature(line: &str, indent: usize) -> Option<DefSig> {
             .unwrap_or(ty_part)
             .trim()
             .to_string();
+        if ty == "type" {
+            continue;
+        }
         if !name.is_empty() && !ty.is_empty() {
             params.push(ParamAnn { name, ty });
         }

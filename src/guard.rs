@@ -43,9 +43,24 @@ def __codonx_type_error(name, ty, value):
     )
 
 
+def __codonx_guard_ok(value, ty, full=False):
+    try:
+        __codonx_assert_value(value, ty, "<union>", full)
+        return True
+    except AssertionError:
+        return False
+
+
+def __codonx_cast_int(value, ty):
+    value = int(value)
+    return __codonx_assert_value(value, ty, "<cast>", full=False)
+
+
 def __codonx_int_bounds(ty):
     aliases = {"byte": "i8"}
     ty = aliases.get(ty, ty)
+    if ty.startswith("__codonx_"):
+        ty = ty[len("__codonx_"):]
     bounds = {
         "int": (-(2 ** 63), 2 ** 63 - 1),
         "i64": (-(2 ** 63), 2 ** 63 - 1),
@@ -104,9 +119,27 @@ def __codonx_inner_type(ty, prefix):
 def __codonx_assert_value(value, ty, name="<value>", full=False):
     ty = str(ty).strip()
 
+    if ty in ("None", "NoneType"):
+        if value is not None:
+            __codonx_type_error(name, ty, value)
+        return value
+
     # Common aliases produced by the Python debug target after type rewrite.
     if ty in ("Any", "object", "pyobj"):
         return value
+
+    inner = __codonx_inner_type(ty, "Optional")
+    if inner is not None:
+        if value is None:
+            return value
+        return __codonx_assert_value(value, inner, name, full)
+
+    inner = __codonx_inner_type(ty, "Union")
+    if inner is not None:
+        parts = __codonx_split_top_level_commas(inner)
+        if any(__codonx_guard_ok(value, part, full) for part in parts):
+            return value
+        __codonx_type_error(name, ty, value)
 
     int_bounds = __codonx_int_bounds(ty)
     if int_bounds is not None:
@@ -352,6 +385,21 @@ fn record_guard_type_warnings_inner(file: &str, line: usize, ty: &str, report: &
                 }
             }
         }
+        GuardType::Optional(inner) => record_guard_type_warnings_inner(file, line, &inner, report),
+        GuardType::Union(items) => {
+            for item in items {
+                record_guard_type_warnings_inner(file, line, &item, report);
+            }
+        }
+        GuardType::Literal(inner) => {
+            report.warn_semantic(
+                file,
+                line,
+                "literal-softened",
+                "Codon Literal[...] is checked as its underlying Python debug type",
+            );
+            record_guard_type_warnings_inner(file, line, &inner, report);
+        }
         GuardType::Unchecked => report.warn_unchecked_dynamic_type(file, line, ty),
         GuardType::Unknown => report.warn_unknown_guard_type(file, line, ty),
         GuardType::Known => {}
@@ -366,6 +414,9 @@ enum GuardType {
     Set(String),
     Dict(String, String),
     Tuple(Vec<String>),
+    Optional(String),
+    Union(Vec<String>),
+    Literal(String),
     Unchecked,
     Unknown,
 }
@@ -390,6 +441,8 @@ fn classify_guard_type(ty: &str) -> GuardType {
             | "float"
             | "bool"
             | "str"
+            | "None"
+            | "NoneType"
     ) || parse_int_bits(&ty, "Int").is_some()
         || parse_int_bits(&ty, "UInt").is_some()
     {
@@ -416,6 +469,15 @@ fn classify_guard_type(ty: &str) -> GuardType {
     }
     if let Some(inner) = inner_type(&ty, "tuple") {
         return GuardType::Tuple(split_top_level_commas(inner));
+    }
+    if let Some(inner) = inner_type(&ty, "Optional") {
+        return GuardType::Optional(inner.to_string());
+    }
+    if let Some(inner) = inner_type(&ty, "Union") {
+        return GuardType::Union(split_top_level_commas(inner));
+    }
+    if let Some(inner) = inner_type(&ty, "Literal") {
+        return GuardType::Literal(inner.to_string());
     }
     GuardType::Unknown
 }
@@ -459,6 +521,16 @@ fn canonicalize_type(ty: &str) -> String {
                         canonicalize_type(&normalize_type_spacing(&part))
                     }
                 })
+                .collect::<Vec<_>>();
+            return format!("{}[{}]", name, parts.join(", "));
+        }
+    }
+
+    for name in ["Optional", "Union", "Literal"] {
+        if let Some(inner) = inner_type(ty, name) {
+            let parts = split_top_level_commas(inner)
+                .into_iter()
+                .map(|part| canonicalize_type(&normalize_type_spacing(&part)))
                 .collect::<Vec<_>>();
             return format!("{}[{}]", name, parts.join(", "));
         }

@@ -21,7 +21,7 @@ write a Codon-first .codon file
 The idea is not to pretend that Python and Codon are identical.  
 The idea is to make their differences **explicit, local, and testable**.
 
-Current status: **0.0.6 MVP / experimental**.
+Current status: **0.0.7 MVP / experimental**.
 
 ---
 
@@ -87,7 +87,7 @@ codonx --version
 ```
 
 ```text
-codonx 0.0.6
+codonx 0.0.7
 ```
 
 ---
@@ -181,7 +181,7 @@ Codon release target keeps the performance-oriented source.
 
 ## Python debug mode
 
-In 0.0.6, Python output is generated with the top-level `--dbg` option.
+In 0.0.7, Python output is generated with the top-level `--dbg` option.
 
 ```bash
 codonx --dbg input.codon -o output.py
@@ -213,7 +213,7 @@ With a warning report:
 codonx --dbg input.codon -o output.py --report report.json
 ```
 
-Important: there is **no `codonx py` subcommand in 0.0.6**.  
+Important: there is **no `codonx py` subcommand in 0.0.7**.  
 The current release uses `--dbg`.
 
 ---
@@ -264,7 +264,7 @@ codonx --codon-bin /opt/codon/bin/codon run input.codon
 
 ## Codon subprocess hooks: `#%define`
 
-0.0.6 also supports small source-level hooks for Codon subprocess setup.
+0.0.7 also supports small source-level hooks for Codon subprocess setup.
 
 ```python
 #%define CODON_PYTHON /path/to/libpython3.12.so
@@ -314,8 +314,27 @@ Python debug output uses a small whitelist of lowering rules.
 | `f32/f64` | annotation becomes `float` |
 | `float32` | annotation becomes `float`; report warns about precision limits |
 | `List/Dict/Set/Tuple` | annotation container name becomes lowercase |
+| `i32(x)`, `u64(x)`, `Int[N](x)`, `UInt[N](x)` | simple casts become checked Python debug casts |
+| `f32(x)`, `float32(x)`, `f64(x)` | simple casts become `float(x)` |
+| `def f[T](...)`, `class C[T]:` | generic type parameters are erased |
+| `T: type` function parameters | removed from Python debug signatures |
+| `@export`, `@tuple`, `@extend` | removed with report warnings |
+| `@llvm` functions | omitted with warning; use explicit target branches |
+| `static.range(...)` | lowered to runtime `range(...)` with warning |
+
+Warning-only boundaries:
+
+| Codon-dialect input | Python debug behavior |
+|---|---|
+| typed `from python import ...(...) -> ...` | warning/comment; use explicit branch for wrappers |
+| `from C import ...`, `import C` | warning/comment; C interop is not simulated |
+| `Ptr[...]`, `cobj`, `__ptr__` | warning; pointer semantics are not simulated |
 
 Anything beyond this should use explicit target branches.
+
+0.0.7 is intended as the final regex/string-level expansion release. Future
+larger compatibility work should use a parser/AST layer or explicit directives
+rather than adding increasingly broad regex rewrites.
 
 ---
 
@@ -328,6 +347,7 @@ Currently guarded:
 - `float`, `f32`, `f64`, and `float32`;
 - `bool`;
 - ASCII `str`;
+- `Optional[T]`, `Union[...]`, `NoneType`, and softened `Literal[...]`;
 - outer shapes for `list[T]`, `set[T]`, `dict[K, V]`, and `tuple[...]`;
 - container elements with `--assert full`.
 

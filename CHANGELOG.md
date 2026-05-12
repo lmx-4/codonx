@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.0.7 - 2026-05-12
+
+Regex exhaustion release.
+
+- Added scalar cast lowering for fixed-width integer casts and documented simple-call boundaries.
+- Added generic function/class type-parameter erasure for Python debug output.
+- Added warning/removal coverage for `@export`, `@tuple`, `@extend`, LLVM-related annotations, C interop, pointer interop, and `static.range`.
+- Added guard support for `Optional[T]`, `Union[...]`, `NoneType`, and `Literal[...]` softening.
+- Added report JSON counters for lowered casts, erased generics, interop warnings, and unsupported regex boundaries.
+- Documented 0.0.7 as the final regex/string-level expansion release before the 0.1.0 boundary.
+
 ## 0.0.6 - 2026-05-12
 
 Python debug assert enhancement release.

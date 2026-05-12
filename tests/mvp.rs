@@ -306,7 +306,7 @@ print(sum_squares([1, 2, 3]))
     assert!(py_text.contains("full=True"));
 
     let report_text = fs::read_to_string(&report).unwrap();
-    assert!(report_text.contains("unsupported-syntax"));
+    assert!(report_text.contains("typed-python-interop-unsupported"));
     assert!(report_text.contains("python-interop"));
     assert!(report_text.contains("parallel-fallback"));
     assert!(report_text.contains("gpu-fallback"));
@@ -483,7 +483,7 @@ def work(n: i32) -> i32:
     assert!(py_text.contains("def work(n: int) -> int:"));
 
     let report_text = fs::read_to_string(report).unwrap();
-    assert!(report_text.contains("unsupported-syntax"));
+    assert!(report_text.contains("typed-python-interop-unsupported"));
     assert!(report_text.contains("python-interop"));
     assert!(report_text.contains("parallel-fallback"));
 }
@@ -728,6 +728,257 @@ fn assert_off_skips_guard_prelude_and_guard_warnings() {
     assert!(report_text.contains("\"semantic_warnings\": 0"));
     assert!(!report_text.contains("unknown-guard-type"));
     assert!(!report_text.contains("float32-precision"));
+}
+
+#[test]
+fn scalar_casts_are_lowered_with_range_checks() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = write_file(
+        dir.path(),
+        "casts.codon",
+        r#"def ok() -> i32:
+    a: i32 = i8(127)
+    b: u8 = UInt[8](255)
+    c: f32 = float32(1)
+    d: i32 = i32(a + b)
+    return d + int(c)
+
+print(ok())
+"#,
+    );
+    let py = dir.path().join("casts.py");
+    let report = dir.path().join("casts.json");
+
+    let out = run(&[
+        "--dbg",
+        src.to_str().unwrap(),
+        "--assert",
+        "full",
+        "-o",
+        py.to_str().unwrap(),
+        "--report",
+        report.to_str().unwrap(),
+    ]);
+    assert_success(&out);
+    let py_text = fs::read_to_string(&py).unwrap();
+    assert!(py_text.contains("__codonx_cast_int(127, \"__codonx_i8\")"));
+    assert!(py_text.contains("__codonx_cast_int(255, \"__codonx_UInt[8]\")"));
+    assert!(py_text.contains("float(1)"));
+
+    let ok = Command::new("python3").arg(&py).output().unwrap();
+    assert_success(&ok);
+    assert_eq!(String::from_utf8_lossy(&ok.stdout).trim(), "383");
+
+    let fail_src = write_file(dir.path(), "bad_cast.codon", "print(u8(-1))\n");
+    let fail_py = dir.path().join("bad_cast.py");
+    let out = run(&[
+        "--dbg",
+        fail_src.to_str().unwrap(),
+        "-o",
+        fail_py.to_str().unwrap(),
+    ]);
+    assert_success(&out);
+    let fail = Command::new("python3").arg(fail_py).output().unwrap();
+    assert!(!fail.status.success());
+    assert!(String::from_utf8_lossy(&fail.stderr).contains("codonx guard failed"));
+
+    let report_text = fs::read_to_string(report).unwrap();
+    assert!(report_text.contains("\"lowered_casts\": 4"));
+    assert!(report_text.contains("float32-precision"));
+}
+
+#[test]
+fn generics_are_erased_to_python_debug_syntax() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = write_file(
+        dir.path(),
+        "generics.codon",
+        r#"def first[T](xs: list[T], T: type = int):
+    return xs[0]
+
+class Box[T]:
+    value: T
+    def __init__(self, value: T):
+        self.value = value
+
+print(first([3]))
+print(Box("x").value)
+"#,
+    );
+    let py = dir.path().join("generics.py");
+    let report = dir.path().join("generics.json");
+
+    let out = run(&[
+        "--dbg",
+        src.to_str().unwrap(),
+        "--assert",
+        "off",
+        "-o",
+        py.to_str().unwrap(),
+        "--report",
+        report.to_str().unwrap(),
+    ]);
+    assert_success(&out);
+    let py_text = fs::read_to_string(&py).unwrap();
+    assert!(py_text.contains("def first(xs: list[object]):"));
+    assert!(py_text.contains("class Box:"));
+    assert!(!py_text.contains("[T]"));
+    assert!(!py_text.contains("T: type"));
+
+    let ok = Command::new("python3").arg(&py).output().unwrap();
+    assert_success(&ok);
+    assert_eq!(String::from_utf8_lossy(&ok.stdout).trim(), "3\nx");
+
+    let report_text = fs::read_to_string(report).unwrap();
+    assert!(report_text.contains("\"erased_generics\": 3"));
+    assert!(report_text.contains("generic-type-param-erased"));
+}
+
+#[test]
+fn decorators_interop_and_static_boundaries_warn_clearly() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = write_file(
+        dir.path(),
+        "boundaries.codon",
+        r#"from C import foo(int) -> int
+
+@export
+def exported(n: i32) -> i32:
+    return n
+
+@tuple
+class Pair:
+    a: i32
+    b: i32
+
+@extend
+class int:
+    def twice(self):
+        return self * 2
+
+@llvm
+def low(a: int) -> int:
+    %res = add i64 %a, 1
+    ret i64 %res
+
+def uses_static(n: i32, p: Ptr[int], c: cobj):
+    for i in static.range(n):
+        print(i)
+
+uses_static(2, None, None)
+"#,
+    );
+    let py = dir.path().join("boundaries.py");
+    let report = dir.path().join("boundaries.json");
+
+    let out = run(&[
+        "--dbg",
+        src.to_str().unwrap(),
+        "--assert",
+        "off",
+        "-o",
+        py.to_str().unwrap(),
+        "--report",
+        report.to_str().unwrap(),
+    ]);
+    assert_success(&out);
+    let py_text = fs::read_to_string(&py).unwrap();
+    assert!(py_text.contains("unsupported C interop"));
+    assert!(py_text.contains("removed @export"));
+    assert!(py_text.contains("removed @tuple"));
+    assert!(py_text.contains("removed @extend"));
+    assert!(py_text.contains("omitted @llvm function"));
+    assert!(py_text.contains("range(n)"));
+    assert!(!py_text.contains("\n    %res"));
+
+    let ok = Command::new("python3").arg(&py).output().unwrap();
+    assert_success(&ok);
+
+    let report_text = fs::read_to_string(report).unwrap();
+    assert!(report_text.contains("c-interop-unsupported"));
+    assert!(report_text.contains("export-ignored"));
+    assert!(report_text.contains("tuple-class-semantics"));
+    assert!(report_text.contains("extension-method-semantics"));
+    assert!(report_text.contains("llvm-unsupported"));
+    assert!(report_text.contains("pointer-interop-unsupported"));
+    assert!(report_text.contains("static-range-lowered"));
+    assert!(report_text.contains("\"interop_warnings\": 2"));
+    assert!(report_text.contains("\"unsupported_regex_boundaries\": 1"));
+}
+
+#[test]
+fn optional_union_none_and_literal_guards_are_checked() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = write_file(
+        dir.path(),
+        "optional_union.codon",
+        r#"def maybe(x: Optional[i32]) -> Optional[i32]:
+    return x
+
+def either(x: Union[i32, str]) -> Union[i32, str]:
+    return x
+
+def none_only(x: NoneType) -> NoneType:
+    return x
+
+def lit(x: Literal[int]) -> Literal[int]:
+    return x
+
+print(maybe(None))
+print(either("ok"))
+print(none_only(None))
+print(lit(1))
+"#,
+    );
+    let py = dir.path().join("optional_union.py");
+    let report = dir.path().join("optional_union.json");
+
+    let out = run(&[
+        "--dbg",
+        src.to_str().unwrap(),
+        "--assert",
+        "full",
+        "-o",
+        py.to_str().unwrap(),
+        "--report",
+        report.to_str().unwrap(),
+    ]);
+    assert_success(&out);
+    let ok = Command::new("python3").arg(&py).output().unwrap();
+    assert_success(&ok);
+
+    let bad_optional = Command::new("python3")
+        .arg("-c")
+        .arg(format!(
+            "ns={{}}; exec(open({:?}).read(), ns); ns['maybe'](2**40)",
+            py.display().to_string()
+        ))
+        .output()
+        .unwrap();
+    assert!(!bad_optional.status.success());
+
+    let bad_union = Command::new("python3")
+        .arg("-c")
+        .arg(format!(
+            "ns={{}}; exec(open({:?}).read(), ns); ns['either'](1.5)",
+            py.display().to_string()
+        ))
+        .output()
+        .unwrap();
+    assert!(!bad_union.status.success());
+
+    let bad_none = Command::new("python3")
+        .arg("-c")
+        .arg(format!(
+            "ns={{}}; exec(open({:?}).read(), ns); ns['none_only'](0)",
+            py.display().to_string()
+        ))
+        .output()
+        .unwrap();
+    assert!(!bad_none.status.success());
+
+    let report_text = fs::read_to_string(report).unwrap();
+    assert!(report_text.contains("literal-softened"));
 }
 
 #[test]
