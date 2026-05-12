@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.0 - 2026-05-12
+
+Regex-level MVP stabilization release.
+
+- Stabilized codonx as a Python 3.12+ debug target and Codon release target preprocessor.
+- Froze the regex/string-level lowering boundary except for conservative bug fixes.
+- Documented the stability contract: ambiguous Codon/Python semantic differences require explicit `#%ifpy` / `#%ifcodon` branches.
+- Kept the conservative rewrite policy: codonx should prefer warning or no-op behavior over risky automatic rewrites.
+
 ## 0.0.8 - 2026-05-12
 
 Python 3.12+ target clarification release.

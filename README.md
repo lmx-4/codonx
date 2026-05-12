@@ -21,7 +21,7 @@ write a Codon-first .codon file
 The idea is not to pretend that Python and Codon are identical.  
 The idea is to make their differences **explicit, local, and testable**.
 
-Current status: **0.0.8 MVP / experimental**.
+Current status: **0.1.0 regex-level MVP / experimental**.
 
 ---
 
@@ -49,6 +49,30 @@ It is a lightweight preprocessing layer for a deliberately Codon-first workflow.
 The Python debug target is explicitly **Python 3.12+ only**. codonx does not
 try to generate Python 3.11-compatible output, and it may preserve Python 3.12
 syntax such as PEP 695 generic function and class type parameter lists.
+
+## Stability contract for 0.1.x
+
+The 0.1.x line stabilizes codonx as a conservative regex/string-level MVP.
+
+Guaranteed:
+
+- Python debug output targets Python 3.12 and newer only.
+- Codon output keeps release-oriented Codon code as close to the selected source branch as possible.
+- `#%ifpy` / `#%ifcodon` are the supported way to express real semantic differences.
+- Existing lowering and guard behavior should stay backward-compatible unless it is fixing an unsafe rewrite.
+
+Conservative rewrite policy:
+
+- codonx should prefer a warning or no-op over a risky automatic rewrite.
+- Regex lowering is limited to local, line-oriented, documented patterns.
+- Future compatibility expansion should use a parser/AST layer or explicit directives instead of broadening regex rules.
+
+Explicitly unsupported:
+
+- full Codon-to-Python transpilation;
+- overload resolution or generic monomorphization;
+- LLVM, C pointer, GPU, parallel race, and Codon JIT semantic simulation;
+- reliable multi-line expression, multi-line signature, or nested-call rewriting.
 
 ---
 
@@ -91,7 +115,7 @@ codonx --version
 ```
 
 ```text
-codonx 0.0.8
+codonx 0.1.0
 ```
 
 ---
@@ -185,7 +209,7 @@ Codon release target keeps the performance-oriented source.
 
 ## Python debug mode
 
-In 0.0.8, Python output is generated with the top-level `--dbg` option.
+In 0.1.0, Python output is generated with the top-level `--dbg` option.
 
 ```bash
 codonx --dbg input.codon -o output.py
@@ -217,7 +241,7 @@ With a warning report:
 codonx --dbg input.codon -o output.py --report report.json
 ```
 
-Important: there is **no `codonx py` subcommand in 0.0.8**.  
+Important: there is **no `codonx py` subcommand in 0.1.0**.  
 The current release uses `--dbg`.
 
 ---
@@ -268,7 +292,7 @@ codonx --codon-bin /opt/codon/bin/codon run input.codon
 
 ## Codon subprocess hooks: `#%define`
 
-0.0.8 also supports small source-level hooks for Codon subprocess setup.
+0.1.0 also supports small source-level hooks for Codon subprocess setup.
 
 ```python
 #%define CODON_PYTHON /path/to/libpython3.12.so
