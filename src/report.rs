@@ -15,6 +15,9 @@ pub struct Report {
     pub rewritten_imports: usize,
     pub removed_parallel_annotations: usize,
     pub inserted_guards: usize,
+    pub unknown_guard_types: usize,
+    pub unchecked_dynamic_types: usize,
+    pub semantic_warnings: usize,
 }
 
 impl Report {
@@ -25,6 +28,43 @@ impl Report {
             kind: kind.to_string(),
             message: message.into(),
         });
+    }
+
+    pub fn warn_unknown_guard_type(&mut self, file: &str, line: usize, ty: &str) {
+        self.unknown_guard_types += 1;
+        self.warn(
+            file,
+            line,
+            "unknown-guard-type",
+            format!(
+                "unknown guard type `{}` is soft-passed in Python debug target",
+                ty
+            ),
+        );
+    }
+
+    pub fn warn_unchecked_dynamic_type(&mut self, file: &str, line: usize, ty: &str) {
+        self.unchecked_dynamic_types += 1;
+        self.warn(
+            file,
+            line,
+            "unchecked-dynamic-type",
+            format!(
+                "dynamic guard type `{}` is not checked in Python debug target",
+                ty
+            ),
+        );
+    }
+
+    pub fn warn_semantic(
+        &mut self,
+        file: &str,
+        line: usize,
+        kind: &str,
+        message: impl Into<String>,
+    ) {
+        self.semantic_warnings += 1;
+        self.warn(file, line, kind, message);
     }
 
     pub fn write_json(&self, path: &Path) -> anyhow::Result<()> {

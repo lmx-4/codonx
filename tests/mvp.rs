@@ -524,6 +524,213 @@ print(add_i32(1, 2))
 }
 
 #[test]
+fn extended_integer_guards_check_param_assignment_and_return() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = write_file(
+        dir.path(),
+        "int_widths.codon",
+        r#"def narrow(a: Int[8], b: UInt[8], c: byte) -> UInt[8]:
+    x: Int[8] = a
+    return b
+
+print(narrow(127, 255, -128))
+"#,
+    );
+    let py = dir.path().join("int_widths.py");
+
+    let out = run(&[
+        "--dbg",
+        src.to_str().unwrap(),
+        "--assert",
+        "full",
+        "-o",
+        py.to_str().unwrap(),
+    ]);
+    assert_success(&out);
+    let py_text = fs::read_to_string(&py).unwrap();
+    assert!(py_text.contains("def narrow(a: int, b: int, c: int) -> int:"));
+    assert!(py_text.contains("__codonx_assert_value(a, \"Int[8]\""));
+    assert!(py_text.contains("__codonx_assert_value(b, \"UInt[8]\""));
+    assert!(py_text.contains("__codonx_assert_value(c, \"i8\""));
+
+    let ok = Command::new("python3").arg(&py).output().unwrap();
+    assert_success(&ok);
+
+    let overflow = Command::new("python3")
+        .arg("-c")
+        .arg(format!(
+            "ns={{}}; exec(open({:?}).read(), ns); ns['narrow'](128, 1, 0)",
+            py.display().to_string()
+        ))
+        .output()
+        .unwrap();
+    assert!(!overflow.status.success());
+    assert!(String::from_utf8_lossy(&overflow.stderr).contains("codonx guard failed"));
+
+    let negative_uint = Command::new("python3")
+        .arg("-c")
+        .arg(format!(
+            "ns={{}}; exec(open({:?}).read(), ns); ns['narrow'](1, -1, 0)",
+            py.display().to_string()
+        ))
+        .output()
+        .unwrap();
+    assert!(!negative_uint.status.success());
+    assert!(String::from_utf8_lossy(&negative_uint.stderr).contains("codonx guard failed"));
+}
+
+#[test]
+fn full_container_guards_recurse_through_aliases() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = write_file(
+        dir.path(),
+        "containers.codon",
+        r#"def use_containers(xs: List[Int[8]], ys: Dict[str, UInt[16]], zs: Set[byte], pair: Tuple[i32, str]) -> Tuple[i32, str]:
+    return pair
+"#,
+    );
+    let py = dir.path().join("containers.py");
+
+    let out = run(&[
+        "--dbg",
+        src.to_str().unwrap(),
+        "--assert",
+        "full",
+        "-o",
+        py.to_str().unwrap(),
+    ]);
+    assert_success(&out);
+    let py_text = fs::read_to_string(&py).unwrap();
+    assert!(py_text.contains("\"list[Int[8]]\""));
+    assert!(py_text.contains("\"dict[str, UInt[16]]\""));
+    assert!(py_text.contains("\"set[i8]\""));
+    assert!(py_text.contains("\"tuple[i32, str]\""));
+
+    let ok = Command::new("python3")
+        .arg("-c")
+        .arg(format!(
+            "ns={{}}; exec(open({:?}).read(), ns); ns['use_containers']([1], {{'a': 65535}}, {{-1}}, (1, 'x'))",
+            py.display().to_string()
+        ))
+        .output()
+        .unwrap();
+    assert_success(&ok);
+
+    let bad_list = Command::new("python3")
+        .arg("-c")
+        .arg(format!(
+            "ns={{}}; exec(open({:?}).read(), ns); ns['use_containers']([128], {{'a': 1}}, {{1}}, (1, 'x'))",
+            py.display().to_string()
+        ))
+        .output()
+        .unwrap();
+    assert!(!bad_list.status.success());
+
+    let bad_dict = Command::new("python3")
+        .arg("-c")
+        .arg(format!(
+            "ns={{}}; exec(open({:?}).read(), ns); ns['use_containers']([1], {{'a': 65536}}, {{1}}, (1, 'x'))",
+            py.display().to_string()
+        ))
+        .output()
+        .unwrap();
+    assert!(!bad_dict.status.success());
+
+    let bad_set = Command::new("python3")
+        .arg("-c")
+        .arg(format!(
+            "ns={{}}; exec(open({:?}).read(), ns); ns['use_containers']([1], {{'a': 1}}, {{128}}, (1, 'x'))",
+            py.display().to_string()
+        ))
+        .output()
+        .unwrap();
+    assert!(!bad_set.status.success());
+
+    let bad_tuple = Command::new("python3")
+        .arg("-c")
+        .arg(format!(
+            "ns={{}}; exec(open({:?}).read(), ns); ns['use_containers']([1], {{'a': 1}}, {{1}}, (1,))",
+            py.display().to_string()
+        ))
+        .output()
+        .unwrap();
+    assert!(!bad_tuple.status.success());
+}
+
+#[test]
+fn guard_type_reports_include_new_warning_categories() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = write_file(
+        dir.path(),
+        "guard_report.codon",
+        r#"def risky(a: Mystery, b: pyobj, c: Any, d: object, e: f32, f: float32, g: Dict[str, i32], h: Set[byte], t: tuple[i32, ...]):
+    pass
+"#,
+    );
+    let py = dir.path().join("guard_report.py");
+    let report = dir.path().join("guard_report.json");
+
+    let out = run(&[
+        "--dbg",
+        src.to_str().unwrap(),
+        "--assert",
+        "shallow",
+        "-o",
+        py.to_str().unwrap(),
+        "--report",
+        report.to_str().unwrap(),
+    ]);
+    assert_success(&out);
+
+    let report_text = fs::read_to_string(report).unwrap();
+    assert!(report_text.contains("\"unknown_guard_types\": 1"));
+    assert!(report_text.contains("\"unchecked_dynamic_types\": 3"));
+    assert!(report_text.contains("\"semantic_warnings\": 5"));
+    assert!(report_text.contains("unknown-guard-type"));
+    assert!(report_text.contains("unchecked-dynamic-type"));
+    assert!(report_text.contains("float32-precision"));
+    assert!(report_text.contains("unordered-container"));
+    assert!(report_text.contains("unsupported-tuple-ellipsis"));
+}
+
+#[test]
+fn assert_off_skips_guard_prelude_and_guard_warnings() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = write_file(
+        dir.path(),
+        "assert_off.codon",
+        r#"def risky(a: Mystery, b: pyobj, c: f32, d: Dict[str, i32]):
+    pass
+"#,
+    );
+    let py = dir.path().join("assert_off.py");
+    let report = dir.path().join("assert_off.json");
+
+    let out = run(&[
+        "--dbg",
+        src.to_str().unwrap(),
+        "--assert",
+        "off",
+        "-o",
+        py.to_str().unwrap(),
+        "--report",
+        report.to_str().unwrap(),
+    ]);
+    assert_success(&out);
+
+    let py_text = fs::read_to_string(py).unwrap();
+    assert!(!py_text.contains("codonx semantic guard prelude"));
+    assert!(!py_text.contains("__codonx_assert_value"));
+
+    let report_text = fs::read_to_string(report).unwrap();
+    assert!(report_text.contains("\"unknown_guard_types\": 0"));
+    assert!(report_text.contains("\"unchecked_dynamic_types\": 0"));
+    assert!(report_text.contains("\"semantic_warnings\": 0"));
+    assert!(!report_text.contains("unknown-guard-type"));
+    assert!(!report_text.contains("float32-precision"));
+}
+
+#[test]
 fn codon_run_swaps_input_path_and_deletes_preprocessed_file() {
     let dir = tempfile::tempdir().unwrap();
     let src = write_file(dir.path(), "app.codonx", "print(1)\n");

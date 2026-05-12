@@ -21,7 +21,7 @@ write a Codon-first .codon file
 The idea is not to pretend that Python and Codon are identical.  
 The idea is to make their differences **explicit, local, and testable**.
 
-Current status: **0.0.5 MVP / experimental**.
+Current status: **0.0.6 MVP / experimental**.
 
 ---
 
@@ -87,7 +87,7 @@ codonx --version
 ```
 
 ```text
-codonx 0.0.5
+codonx 0.0.6
 ```
 
 ---
@@ -181,7 +181,7 @@ Codon release target keeps the performance-oriented source.
 
 ## Python debug mode
 
-In 0.0.5, Python output is generated with the top-level `--dbg` option.
+In 0.0.6, Python output is generated with the top-level `--dbg` option.
 
 ```bash
 codonx --dbg input.codon -o output.py
@@ -213,7 +213,7 @@ With a warning report:
 codonx --dbg input.codon -o output.py --report report.json
 ```
 
-Important: there is **no `codonx py` subcommand in 0.0.5**.  
+Important: there is **no `codonx py` subcommand in 0.0.6**.  
 The current release uses `--dbg`.
 
 ---
@@ -264,7 +264,7 @@ codonx --codon-bin /opt/codon/bin/codon run input.codon
 
 ## Codon subprocess hooks: `#%define`
 
-0.0.5 also supports small source-level hooks for Codon subprocess setup.
+0.0.6 also supports small source-level hooks for Codon subprocess setup.
 
 ```python
 #%define CODON_PYTHON /path/to/libpython3.12.so
@@ -310,7 +310,10 @@ Python debug output uses a small whitelist of lowering rules.
 | `@gpu.kernel` | removed with warning comment |
 | `@python` | removed with warning comment |
 | `i8/u8/i16/u16/i32/u32/i64/u64` | annotation becomes `int` |
+| `Int[N]/UInt[N]/byte` | annotation becomes `int`; guard keeps width/range intent |
 | `f32/f64` | annotation becomes `float` |
+| `float32` | annotation becomes `float`; report warns about precision limits |
+| `List/Dict/Set/Tuple` | annotation container name becomes lowercase |
 
 Anything beyond this should use explicit target branches.
 
@@ -321,11 +324,16 @@ Anything beyond this should use explicit target branches.
 Currently guarded:
 
 - `int`, `i64`, `u64`, `i32`, `u32`, `i16`, `u16`, `i8`, `u8`;
-- `float`, `f32`, `f64`;
+- `Int[N]`, `UInt[N]`, and `byte`;
+- `float`, `f32`, `f64`, and `float32`;
 - `bool`;
 - ASCII `str`;
 - outer shapes for `list[T]`, `set[T]`, `dict[K, V]`, and `tuple[...]`;
 - container elements with `--assert full`.
+
+With `--report`, guard analysis also warns about unknown guard types, unchecked
+dynamic types such as `pyobj`/`Any`/`object`, `f32` precision differences,
+dict/set ordering risk, and `tuple[T, ...]` soft-check limitations.
 
 Guards are mismatch detectors, not equivalence proofs.
 

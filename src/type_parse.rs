@@ -15,11 +15,32 @@ pub struct DefSig {
 
 pub fn translate_annotations_in_line(line: &str) -> String {
     let mut out = line.to_string();
+    for (from, to) in [
+        ("List", "list"),
+        ("Dict", "dict"),
+        ("Set", "set"),
+        ("Tuple", "tuple"),
+    ] {
+        let re = Regex::new(&format!(r"\b{}\b", from)).unwrap();
+        out = re.replace_all(&out, to).to_string();
+    }
     for codon_ty in ["i8", "u8", "i16", "u16", "i32", "u32", "i64", "u64"] {
         let re = Regex::new(&format!(r"\b{}\b", regex::escape(codon_ty))).unwrap();
         out = re.replace_all(&out, "int").to_string();
     }
+    out = Regex::new(r"\bU?Int\[\s*\d+\s*\]")
+        .unwrap()
+        .replace_all(&out, "int")
+        .to_string();
+    out = Regex::new(r"\bbyte\b")
+        .unwrap()
+        .replace_all(&out, "int")
+        .to_string();
     out = Regex::new(r"\bf32\b")
+        .unwrap()
+        .replace_all(&out, "float")
+        .to_string();
+    out = Regex::new(r"\bfloat32\b")
         .unwrap()
         .replace_all(&out, "float")
         .to_string();

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.0.6 - 2026-05-12
+
+Python debug assert enhancement release.
+
+- Added guard support for `Int[N]`, `UInt[N]`, `byte`, `float32`, and uppercase container aliases.
+- Added generation-time warnings for unknown guard types, unchecked dynamic types, float32 precision risk, unordered dict/set behavior, and unsupported tuple ellipsis.
+- Kept unknown and dynamic guard types as soft-pass behavior to avoid false positives in 0.0.x.
+- Preserved existing `--assert off`, `--assert shallow`, and `--assert full` CLI behavior while expanding full container recursion coverage.
+- Added report JSON counters for unknown guard types, unchecked dynamic types, and semantic warnings.
+
 ## 0.0.5 - 2026-05-11
 
 Target directive model release.

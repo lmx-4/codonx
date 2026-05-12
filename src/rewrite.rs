@@ -2,7 +2,7 @@ use crate::cli::AssertArg;
 use crate::emit::Target;
 use crate::guard::{
     canonical_guard_type, guard_return_lines, guard_stmts_for_assignment, guard_stmts_for_params,
-    guards_enabled, normalize_param_pairs, python_guard_prelude,
+    guards_enabled, normalize_param_pairs, python_guard_prelude, record_guard_type_warnings,
 };
 use crate::report::Report;
 use crate::source::SourceLine;
@@ -67,6 +67,12 @@ fn rewrite_py_lines(
             let ret = sig.ret.as_deref().map(canonical_guard_type);
             out.push(translate_annotations_in_line(&rewritten));
             let params = normalize_param_pairs(sig.params.into_iter().map(|p| (p.name, p.ty)));
+            for (_, ty) in &params {
+                record_guard_type_warnings(file, line.no, ty, assert_mode, report);
+            }
+            if let Some(ret_ty) = ret.as_deref() {
+                record_guard_type_warnings(file, line.no, ret_ty, assert_mode, report);
+            }
             let guards = guard_stmts_for_params(&params, assert_mode, line.indent + 4);
             report.inserted_guards += guards.len();
             out.extend(guards);
@@ -90,12 +96,9 @@ fn rewrite_py_lines(
         out.push(rewritten.clone());
 
         if let Some((name, ty)) = parse_ann_assign(&line.raw) {
-            let guards = guard_stmts_for_assignment(
-                &name,
-                &canonical_guard_type(&ty),
-                assert_mode,
-                line.indent,
-            );
+            let ty = canonical_guard_type(&ty);
+            record_guard_type_warnings(file, line.no, &ty, assert_mode, report);
+            let guards = guard_stmts_for_assignment(&name, &ty, assert_mode, line.indent);
             report.inserted_guards += guards.len();
             out.extend(guards);
         }

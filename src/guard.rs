@@ -15,6 +15,7 @@
 //! - pointer/LLVM/C-interop semantics
 
 use crate::cli::AssertArg;
+use crate::report::Report;
 use crate::type_parse::split_top_level_commas;
 
 /// Convert the CLI assert mode to the boolean expected by the Python helper.
@@ -43,6 +44,8 @@ def __codonx_type_error(name, ty, value):
 
 
 def __codonx_int_bounds(ty):
+    aliases = {"byte": "i8"}
+    ty = aliases.get(ty, ty)
     bounds = {
         "int": (-(2 ** 63), 2 ** 63 - 1),
         "i64": (-(2 ** 63), 2 ** 63 - 1),
@@ -54,7 +57,19 @@ def __codonx_int_bounds(ty):
         "i8": (-(2 ** 7), 2 ** 7 - 1),
         "u8": (0, 2 ** 8 - 1),
     }
-    return bounds.get(ty)
+    if ty in bounds:
+        return bounds[ty]
+    if ty.startswith("Int[") and ty.endswith("]"):
+        bits = ty[4:-1].strip()
+        if bits.isdigit() and int(bits) > 0:
+            bits = int(bits)
+            return (-(2 ** (bits - 1)), 2 ** (bits - 1) - 1)
+    if ty.startswith("UInt[") and ty.endswith("]"):
+        bits = ty[5:-1].strip()
+        if bits.isdigit() and int(bits) > 0:
+            bits = int(bits)
+            return (0, 2 ** bits - 1)
+    return None
 
 
 def __codonx_split_top_level_commas(text):
@@ -100,7 +115,7 @@ def __codonx_assert_value(value, ty, name="<value>", full=False):
             __codonx_type_error(name, ty, value)
         return value
 
-    if ty in ("float", "f32", "f64"):
+    if ty in ("float", "f32", "f64", "float32"):
         if type(value) is not float:
             __codonx_type_error(name, ty, value)
         return value
@@ -156,11 +171,11 @@ def __codonx_assert_value(value, ty, name="<value>", full=False):
         if type(value) is not tuple:
             __codonx_type_error(name, ty, value)
         parts = __codonx_split_top_level_commas(inner)
-        if parts and len(value) != len(parts):
+        if parts and parts[-1] != "..." and len(value) != len(parts):
             raise AssertionError(
                 f"codonx guard failed: {name} expected {ty}, got tuple length {len(value)}"
             )
-        if full:
+        if full and (not parts or parts[-1] != "..."):
             for i, item_ty in enumerate(parts):
                 __codonx_assert_value(value[i], item_ty, f"{name}[{i}]", full)
         return value
@@ -279,7 +294,190 @@ pub fn canonical_guard_type(ty: &str) -> String {
     }
 
     let t = t.split('=').next().unwrap_or(t).trim();
-    normalize_type_spacing(t)
+    canonicalize_type(&normalize_type_spacing(t))
+}
+
+pub fn record_guard_type_warnings(
+    file: &str,
+    line: usize,
+    ty: &str,
+    mode: AssertArg,
+    report: &mut Report,
+) {
+    if !guards_enabled(mode) {
+        return;
+    }
+    record_guard_type_warnings_inner(file, line, ty, report);
+}
+
+fn record_guard_type_warnings_inner(file: &str, line: usize, ty: &str, report: &mut Report) {
+    match classify_guard_type(ty) {
+        GuardType::Float32 => report.warn_semantic(
+            file,
+            line,
+            "float32-precision",
+            "Python debug target checks f32/float32 as Python float and does not simulate 32-bit rounding",
+        ),
+        GuardType::Dict(key, value) => {
+            report.warn_semantic(
+                file,
+                line,
+                "unordered-container",
+                "Codon dict ordering can differ from Python; Python debug code should not rely on dict iteration order",
+            );
+            record_guard_type_warnings_inner(file, line, &key, report);
+            record_guard_type_warnings_inner(file, line, &value, report);
+        }
+        GuardType::Set(inner) => {
+            report.warn_semantic(
+                file,
+                line,
+                "unordered-container",
+                "Codon set ordering can differ from Python; Python debug code should not rely on set iteration order",
+            );
+            record_guard_type_warnings_inner(file, line, &inner, report);
+        }
+        GuardType::List(inner) => record_guard_type_warnings_inner(file, line, &inner, report),
+        GuardType::Tuple(items) => {
+            if items.last().is_some_and(|item| item == "...") {
+                report.warn_semantic(
+                    file,
+                    line,
+                    "unsupported-tuple-ellipsis",
+                    "tuple[T, ...] is soft-checked for tuple shape only in Python debug target",
+                );
+            } else {
+                for item in items {
+                    record_guard_type_warnings_inner(file, line, &item, report);
+                }
+            }
+        }
+        GuardType::Unchecked => report.warn_unchecked_dynamic_type(file, line, ty),
+        GuardType::Unknown => report.warn_unknown_guard_type(file, line, ty),
+        GuardType::Known => {}
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum GuardType {
+    Known,
+    Float32,
+    List(String),
+    Set(String),
+    Dict(String, String),
+    Tuple(Vec<String>),
+    Unchecked,
+    Unknown,
+}
+
+fn classify_guard_type(ty: &str) -> GuardType {
+    let ty = canonical_guard_type(ty);
+    if ty.is_empty() {
+        return GuardType::Unknown;
+    }
+    if matches!(
+        ty.as_str(),
+        "int"
+            | "i8"
+            | "u8"
+            | "i16"
+            | "u16"
+            | "i32"
+            | "u32"
+            | "i64"
+            | "u64"
+            | "f64"
+            | "float"
+            | "bool"
+            | "str"
+    ) || parse_int_bits(&ty, "Int").is_some()
+        || parse_int_bits(&ty, "UInt").is_some()
+    {
+        return GuardType::Known;
+    }
+    if ty == "f32" {
+        return GuardType::Float32;
+    }
+    if matches!(ty.as_str(), "Any" | "object" | "pyobj") {
+        return GuardType::Unchecked;
+    }
+    if let Some(inner) = inner_type(&ty, "list") {
+        return GuardType::List(inner.to_string());
+    }
+    if let Some(inner) = inner_type(&ty, "set") {
+        return GuardType::Set(inner.to_string());
+    }
+    if let Some(inner) = inner_type(&ty, "dict") {
+        let parts = split_top_level_commas(inner);
+        if parts.len() == 2 {
+            return GuardType::Dict(parts[0].clone(), parts[1].clone());
+        }
+        return GuardType::Unknown;
+    }
+    if let Some(inner) = inner_type(&ty, "tuple") {
+        return GuardType::Tuple(split_top_level_commas(inner));
+    }
+    GuardType::Unknown
+}
+
+fn canonicalize_type(ty: &str) -> String {
+    match ty {
+        "byte" => return "i8".to_string(),
+        "float32" => return "f32".to_string(),
+        _ => {}
+    }
+
+    for (from, to) in [
+        ("List", "list"),
+        ("Dict", "dict"),
+        ("Set", "set"),
+        ("Tuple", "tuple"),
+    ] {
+        if let Some(inner) = inner_type(ty, from) {
+            let parts = split_top_level_commas(inner)
+                .into_iter()
+                .map(|part| {
+                    if part == "..." {
+                        part
+                    } else {
+                        canonicalize_type(&normalize_type_spacing(&part))
+                    }
+                })
+                .collect::<Vec<_>>();
+            return format!("{}[{}]", to, parts.join(", "));
+        }
+    }
+
+    for name in ["list", "dict", "set", "tuple"] {
+        if let Some(inner) = inner_type(ty, name) {
+            let parts = split_top_level_commas(inner)
+                .into_iter()
+                .map(|part| {
+                    if part == "..." {
+                        part
+                    } else {
+                        canonicalize_type(&normalize_type_spacing(&part))
+                    }
+                })
+                .collect::<Vec<_>>();
+            return format!("{}[{}]", name, parts.join(", "));
+        }
+    }
+
+    ty.to_string()
+}
+
+fn inner_type<'a>(ty: &'a str, prefix: &str) -> Option<&'a str> {
+    ty.strip_prefix(prefix)?
+        .strip_prefix('[')?
+        .strip_suffix(']')
+        .map(str::trim)
+}
+
+fn parse_int_bits(ty: &str, prefix: &str) -> Option<u32> {
+    let inner = inner_type(ty, prefix)?;
+    let bits = inner.parse::<u32>().ok()?;
+    (bits > 0).then_some(bits)
 }
 
 fn normalize_type_spacing(ty: &str) -> String {
