@@ -12,7 +12,7 @@ Codon is fast and powerful, but real projects often start in Python because Pyth
 write a Codon-first .codon file
         │
         ├── generate Python debug code
-        │       for python3 / pytest / pdb / IDE breakpoints
+        │       for python3.12+ / pytest / pdb / IDE breakpoints
         │
         └── run or build Codon release code
                 through codon run / codon build
@@ -21,7 +21,7 @@ write a Codon-first .codon file
 The idea is not to pretend that Python and Codon are identical.  
 The idea is to make their differences **explicit, local, and testable**.
 
-Current status: **0.0.7 MVP / experimental**.
+Current status: **0.0.8 MVP / experimental**.
 
 ---
 
@@ -46,6 +46,10 @@ A codonx-compatible `.codon` file may contain:
 `codonx` is **not** a general Codon-to-Python transpiler.  
 It is a lightweight preprocessing layer for a deliberately Codon-first workflow.
 
+The Python debug target is explicitly **Python 3.12+ only**. codonx does not
+try to generate Python 3.11-compatible output, and it may preserve Python 3.12
+syntax such as PEP 695 generic function and class type parameter lists.
+
 ---
 
 ## Quick start
@@ -64,7 +68,7 @@ Generate a Python debug file:
 
 ```bash
 codonx --dbg hello.codon -o hello.py
-python3 hello.py
+python3.12 hello.py
 ```
 
 Expected output:
@@ -87,7 +91,7 @@ codonx --version
 ```
 
 ```text
-codonx 0.0.7
+codonx 0.0.8
 ```
 
 ---
@@ -181,7 +185,7 @@ Codon release target keeps the performance-oriented source.
 
 ## Python debug mode
 
-In 0.0.7, Python output is generated with the top-level `--dbg` option.
+In 0.0.8, Python output is generated with the top-level `--dbg` option.
 
 ```bash
 codonx --dbg input.codon -o output.py
@@ -213,7 +217,7 @@ With a warning report:
 codonx --dbg input.codon -o output.py --report report.json
 ```
 
-Important: there is **no `codonx py` subcommand in 0.0.7**.  
+Important: there is **no `codonx py` subcommand in 0.0.8**.  
 The current release uses `--dbg`.
 
 ---
@@ -264,7 +268,7 @@ codonx --codon-bin /opt/codon/bin/codon run input.codon
 
 ## Codon subprocess hooks: `#%define`
 
-0.0.7 also supports small source-level hooks for Codon subprocess setup.
+0.0.8 also supports small source-level hooks for Codon subprocess setup.
 
 ```python
 #%define CODON_PYTHON /path/to/libpython3.12.so
@@ -316,11 +320,15 @@ Python debug output uses a small whitelist of lowering rules.
 | `List/Dict/Set/Tuple` | annotation container name becomes lowercase |
 | `i32(x)`, `u64(x)`, `Int[N](x)`, `UInt[N](x)` | simple casts become checked Python debug casts |
 | `f32(x)`, `float32(x)`, `f64(x)` | simple casts become `float(x)` |
-| `def f[T](...)`, `class C[T]:` | generic type parameters are erased |
+| `def f[T](...)`, `class C[T]:` | preserved as Python 3.12+ generic syntax |
 | `T: type` function parameters | removed from Python debug signatures |
 | `@export`, `@tuple`, `@extend` | removed with report warnings |
+| `@overload` | removed with report warning |
+| `@codon.jit`, `@codon.convert` | removed with interop warning |
 | `@llvm` functions | omitted with warning; use explicit target branches |
 | `static.range(...)` | lowered to runtime `range(...)` with warning |
+| `class Child(Static[Base]):` | lowered to `class Child(Base):` with warning |
+| `float16`, `bfloat16`, `float128` | annotation/cast becomes Python `float` with precision warning |
 
 Warning-only boundaries:
 
@@ -329,6 +337,7 @@ Warning-only boundaries:
 | typed `from python import ...(...) -> ...` | warning/comment; use explicit branch for wrappers |
 | `from C import ...`, `import C` | warning/comment; C interop is not simulated |
 | `Ptr[...]`, `cobj`, `__ptr__` | warning; pointer semantics are not simulated |
+| `ndarray[dtype, ndim]` | warning; dtype/ndim semantics are not simulated |
 
 Anything beyond this should use explicit target branches.
 
@@ -345,6 +354,7 @@ Currently guarded:
 - `int`, `i64`, `u64`, `i32`, `u32`, `i16`, `u16`, `i8`, `u8`;
 - `Int[N]`, `UInt[N]`, and `byte`;
 - `float`, `f32`, `f64`, and `float32`;
+- `complex`;
 - `bool`;
 - ASCII `str`;
 - `Optional[T]`, `Union[...]`, `NoneType`, and softened `Literal[...]`;

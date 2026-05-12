@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.0.8 - 2026-05-12
+
+Python 3.12+ target clarification release.
+
+- Documented Python debug output as targeting Python 3.12 and newer only.
+- Preserved Python 3.12 generic function/class syntax instead of erasing PEP 695 type parameter lists.
+- Kept erasing Codon compile-time `T: type` parameters from Python debug call signatures.
+- Added warning coverage for `@overload`, `@codon.jit`, `@codon.convert`, `Static[...]` inheritance, Codon ndarray types, and additional float widths.
+- Added `complex` guard support and Python `float` lowering for `float16`, `bfloat16`, and `float128`.
+
 ## 0.0.7 - 2026-05-12
 
 Regex exhaustion release.

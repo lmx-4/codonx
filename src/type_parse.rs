@@ -44,6 +44,10 @@ pub fn translate_annotations_in_line(line: &str) -> String {
         .unwrap()
         .replace_all(&out, "float")
         .to_string();
+    out = Regex::new(r"\b(?:float16|bfloat16|float128)\b")
+        .unwrap()
+        .replace_all(&out, "float")
+        .to_string();
     out = Regex::new(r"\bf64\b")
         .unwrap()
         .replace_all(&out, "float")
@@ -80,7 +84,7 @@ pub fn translate_annotations_in_line(line: &str) -> String {
         .unwrap()
         .replace_all(&out, "object")
         .to_string();
-    out = Regex::new(r"\bT\b")
+    out = Regex::new(r"\bndarray\[[^\]]+\]")
         .unwrap()
         .replace_all(&out, "object")
         .to_string();

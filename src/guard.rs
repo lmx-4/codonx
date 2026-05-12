@@ -153,6 +153,16 @@ def __codonx_assert_value(value, ty, name="<value>", full=False):
             __codonx_type_error(name, ty, value)
         return value
 
+    if ty in ("float16", "bfloat16", "float128"):
+        if type(value) is not float:
+            __codonx_type_error(name, ty, value)
+        return value
+
+    if ty == "complex":
+        if type(value) is not complex:
+            __codonx_type_error(name, ty, value)
+        return value
+
     if ty == "bool":
         if type(value) is not bool:
             __codonx_type_error(name, ty, value)
@@ -439,6 +449,7 @@ fn classify_guard_type(ty: &str) -> GuardType {
             | "u64"
             | "f64"
             | "float"
+            | "complex"
             | "bool"
             | "str"
             | "None"
@@ -448,7 +459,7 @@ fn classify_guard_type(ty: &str) -> GuardType {
     {
         return GuardType::Known;
     }
-    if ty == "f32" {
+    if matches!(ty.as_str(), "f32" | "float16" | "bfloat16" | "float128") {
         return GuardType::Float32;
     }
     if matches!(ty.as_str(), "Any" | "object" | "pyobj") {

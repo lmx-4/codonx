@@ -103,7 +103,7 @@ fn rewrite_py_lines(
             }
         }
 
-        let Some(rewritten) = rewrite_py_line(file, line, report) else {
+        let Some(rewritten) = rewrite_py_line(file, line, assert_mode, report) else {
             continue;
         };
 
@@ -127,6 +127,23 @@ fn rewrite_py_lines(
             continue;
         }
 
+        if let Some((name, ty)) = parse_ann_assign(&line.raw) {
+            let translated = translate_annotations_in_line(&rewritten);
+            out.push(translated);
+
+            let ty = canonical_guard_type(&ty);
+            record_guard_type_warnings(file, line.no, &ty, assert_mode, report);
+            let guards = guard_stmts_for_assignment(&name, &ty, assert_mode, line.indent);
+            report.inserted_guards += guards.len();
+            out.extend(guards);
+            continue;
+        }
+
+        if is_simple_ann_decl(&line.raw) {
+            out.push(translate_annotations_in_line(&rewritten));
+            continue;
+        }
+
         if rewritten.trim_start().starts_with("return") {
             if let Some(ctx) = funcs.last() {
                 let guarded =
@@ -138,14 +155,6 @@ fn rewrite_py_lines(
         }
 
         out.push(rewritten.clone());
-
-        if let Some((name, ty)) = parse_ann_assign(&line.raw) {
-            let ty = canonical_guard_type(&ty);
-            record_guard_type_warnings(file, line.no, &ty, assert_mode, report);
-            let guards = guard_stmts_for_assignment(&name, &ty, assert_mode, line.indent);
-            report.inserted_guards += guards.len();
-            out.extend(guards);
-        }
     }
 
     let mut text = out.join("\n");
@@ -155,11 +164,19 @@ fn rewrite_py_lines(
     text
 }
 
-fn rewrite_py_line(file: &str, line: &SourceLine, report: &mut Report) -> Option<String> {
+fn rewrite_py_line(
+    file: &str,
+    line: &SourceLine,
+    assert_mode: AssertArg,
+    report: &mut Report,
+) -> Option<String> {
     if line.in_triple_string {
         return Some(line.raw.clone());
     }
     let trimmed = line.trimmed.trim();
+    if trimmed.starts_with('#') {
+        return Some(line.raw.clone());
+    }
 
     if trimmed.starts_with("@par") {
         report.removed_parallel_annotations += 1;
@@ -204,6 +221,8 @@ fn rewrite_py_line(file: &str, line: &SourceLine, report: &mut Report) -> Option
     if let Some((kind, message)) = decorator_warning(trimmed) {
         if kind == "llvm-unsupported" {
             report.warn_unsupported_regex_boundary(file, line.no, kind, message);
+        } else if kind == "codon-jit-ignored" {
+            report.warn_interop(file, line.no, kind, message);
         } else {
             report.warn_semantic(file, line.no, kind, message);
         }
@@ -237,6 +256,24 @@ fn rewrite_py_line(file: &str, line: &SourceLine, report: &mut Report) -> Option
         );
     }
 
+    if contains_ndarray_type(trimmed) {
+        report.warn_semantic(
+            file,
+            line.no,
+            "ndarray-type-softened",
+            "Codon ndarray dtype/ndim semantics are not checked in Python debug target",
+        );
+    }
+
+    if trimmed == "import codon" || trimmed.starts_with("import codon ") {
+        report.warn_interop(
+            file,
+            line.no,
+            "codon-import-debug",
+            "Python debug target does not require Codon JIT semantics; @codon decorators are ignored when lowered",
+        );
+    }
+
     if trimmed.starts_with("from python import ")
         && (trimmed.contains("->") || trimmed.contains('(') || trimmed.contains(')'))
     {
@@ -255,14 +292,20 @@ fn rewrite_py_line(file: &str, line: &SourceLine, report: &mut Report) -> Option
         line.raw.clone()
     };
 
-    out = erase_generic_syntax(file, line.no, &out, report);
+    out = lower_static_inheritance(file, line.no, &out, report);
+    out = erase_type_params_from_signature(file, line.no, &out, report);
     out = lower_static_range(file, line.no, &out, report);
-    out = lower_scalar_casts(file, line.no, &out, report);
-    out = translate_annotations_in_line(&out);
+    out = lower_scalar_casts(file, line.no, &out, assert_mode, report);
     Some(out)
 }
 
 fn decorator_warning(trimmed: &str) -> Option<(&'static str, &'static str)> {
+    if trimmed.starts_with("@codon.jit") || trimmed.starts_with("@codon.convert") {
+        return Some((
+            "codon-jit-ignored",
+            "Codon JIT/convert decorator is ignored in Python debug target",
+        ));
+    }
     match trimmed {
         "@export" => Some((
             "export-ignored",
@@ -275,6 +318,10 @@ fn decorator_warning(trimmed: &str) -> Option<(&'static str, &'static str)> {
         "@extend" => Some((
             "extension-method-semantics",
             "Codon extension method semantics are not simulated in Python debug target",
+        )),
+        "@overload" => Some((
+            "overload-ignored",
+            "Codon overload dispatch is not simulated in Python debug target",
         )),
         "@llvm" | "@pure" | "@no_side_effect" | "@nocapture" | "@self_captures" | "@derives" => {
             Some((
@@ -297,25 +344,27 @@ fn contains_pointer_interop(trimmed: &str) -> bool {
         || trimmed.contains("CPtr[")
 }
 
-fn erase_generic_syntax(file: &str, line_no: usize, line: &str, report: &mut Report) -> String {
-    let mut out = Regex::new(r"(\bdef\s+[A-Za-z_][A-Za-z0-9_]*)\[[^\]]+\]")
+fn contains_ndarray_type(trimmed: &str) -> bool {
+    trimmed.contains("ndarray[")
+}
+
+fn lower_static_inheritance(file: &str, line_no: usize, line: &str, report: &mut Report) -> String {
+    if !line.trim_start().starts_with("class ") {
+        return line.to_string();
+    }
+    let out = Regex::new(r"class\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(\s*Static\[([^\]]+)\]\s*\)")
         .unwrap()
-        .replace(line, "$1")
-        .to_string();
-    out = Regex::new(r"(\bclass\s+[A-Za-z_][A-Za-z0-9_]*)\[[^\]]+\]")
-        .unwrap()
-        .replace(&out, "$1")
+        .replace(line, "class $1($2)")
         .to_string();
     if out != line {
-        report.erased_generics += 1;
         report.warn_semantic(
             file,
             line_no,
-            "generic-type-param-erased",
-            "Codon generic type parameters are erased in Python debug target",
+            "static-inheritance-lowered",
+            "Codon Static[...] inheritance is lowered to normal Python inheritance in debug target",
         );
     }
-    erase_type_params_from_signature(file, line_no, &out, report)
+    out
 }
 
 fn erase_type_params_from_signature(
@@ -367,6 +416,9 @@ fn erase_type_params_from_signature(
 }
 
 fn lower_static_range(file: &str, line_no: usize, line: &str, report: &mut Report) -> String {
+    if contains_quote(line) {
+        return line.to_string();
+    }
     let out = Regex::new(r"\bstatic\.range\s*\(")
         .unwrap()
         .replace_all(line, "range(")
@@ -382,17 +434,26 @@ fn lower_static_range(file: &str, line_no: usize, line: &str, report: &mut Repor
     out
 }
 
-fn lower_scalar_casts(file: &str, line_no: usize, line: &str, report: &mut Report) -> String {
+fn lower_scalar_casts(
+    file: &str,
+    line_no: usize,
+    line: &str,
+    assert_mode: AssertArg,
+    report: &mut Report,
+) -> String {
+    if contains_quote(line) {
+        return line.to_string();
+    }
     let mut out = line.to_string();
     for ty in ["i8", "u8", "i16", "u16", "i32", "u32", "i64", "u64"] {
         let re = Regex::new(&format!(r"\b{}\s*\((?P<expr>[^()]*)\)", regex::escape(ty))).unwrap();
         let before = out.clone();
-        out = re
-            .replace_all(
-                &out,
-                format!("__codonx_cast_int($expr, \"__codonx_{}\")", ty),
-            )
-            .to_string();
+        let replacement = if guards_enabled(assert_mode) {
+            format!("__codonx_cast_int($expr, \"__codonx_{}\")", ty)
+        } else {
+            "int($expr)".to_string()
+        };
+        out = re.replace_all(&out, replacement).to_string();
         if out != before {
             report.lowered_casts += 1;
         }
@@ -404,17 +465,17 @@ fn lower_scalar_casts(file: &str, line_no: usize, line: &str, report: &mut Repor
         ))
         .unwrap();
         let before = out.clone();
-        out = re
-            .replace_all(
-                &out,
-                format!("__codonx_cast_int($expr, \"__codonx_{}[$bits]\")", prefix),
-            )
-            .to_string();
+        let replacement = if guards_enabled(assert_mode) {
+            format!("__codonx_cast_int($expr, \"__codonx_{}[$bits]\")", prefix)
+        } else {
+            "int($expr)".to_string()
+        };
+        out = re.replace_all(&out, replacement).to_string();
         if out != before {
             report.lowered_casts += 1;
         }
     }
-    for ty in ["f32", "float32", "f64"] {
+    for ty in ["f32", "float32", "f64", "float16", "bfloat16", "float128"] {
         let re = Regex::new(&format!(r"\b{}\s*\((?P<expr>[^()]*)\)", regex::escape(ty))).unwrap();
         let before = out.clone();
         out = re.replace_all(&out, "float($expr)").to_string();
@@ -431,6 +492,16 @@ fn lower_scalar_casts(file: &str, line_no: usize, line: &str, report: &mut Repor
         }
     }
     out
+}
+
+fn contains_quote(line: &str) -> bool {
+    line.contains('"') || line.contains('\'')
+}
+
+fn is_simple_ann_decl(line: &str) -> bool {
+    Regex::new(r"^\s*[A-Za-z_][A-Za-z0-9_]*\s*:\s*[^=#]+$")
+        .unwrap()
+        .is_match(line)
 }
 
 fn find_matching_paren(line: &str, open: usize) -> Option<usize> {

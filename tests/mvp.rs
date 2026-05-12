@@ -788,7 +788,7 @@ print(ok())
 }
 
 #[test]
-fn generics_are_erased_to_python_debug_syntax() {
+fn py312_generics_are_preserved_while_type_params_are_erased() {
     let dir = tempfile::tempdir().unwrap();
     let src = write_file(
         dir.path(),
@@ -820,9 +820,8 @@ print(Box("x").value)
     ]);
     assert_success(&out);
     let py_text = fs::read_to_string(&py).unwrap();
-    assert!(py_text.contains("def first(xs: list[object]):"));
-    assert!(py_text.contains("class Box:"));
-    assert!(!py_text.contains("[T]"));
+    assert!(py_text.contains("def first[T](xs: list[T]):"));
+    assert!(py_text.contains("class Box[T]:"));
     assert!(!py_text.contains("T: type"));
 
     let ok = Command::new("python3").arg(&py).output().unwrap();
@@ -830,7 +829,7 @@ print(Box("x").value)
     assert_eq!(String::from_utf8_lossy(&ok.stdout).trim(), "3\nx");
 
     let report_text = fs::read_to_string(report).unwrap();
-    assert!(report_text.contains("\"erased_generics\": 3"));
+    assert!(report_text.contains("\"erased_generics\": 1"));
     assert!(report_text.contains("generic-type-param-erased"));
 }
 
@@ -979,6 +978,103 @@ print(lit(1))
 
     let report_text = fs::read_to_string(report).unwrap();
     assert!(report_text.contains("literal-softened"));
+}
+
+#[test]
+fn py312_target_edge_lowering_covers_overload_jit_static_float_and_ndarray() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = write_file(
+        dir.path(),
+        "py312_edges.codon",
+        r#"import codon
+
+class Base:
+    pass
+
+class Child(Static[Base]):
+    pass
+
+@overload
+def choose(x: i32) -> i32:
+    return x
+
+@codon.jit(pyvars=["choose"])
+def jitted(x: float16, arr: ndarray[f32, 2]) -> complex:
+    y: bfloat16 = bfloat16(1)
+    z: float128 = float128(2)
+    return complex(float16(x) + y + z)
+
+print(Child().__class__.__name__)
+"#,
+    );
+    let py = dir.path().join("py312_edges.py");
+    let report = dir.path().join("py312_edges.json");
+
+    let out = run(&[
+        "--dbg",
+        src.to_str().unwrap(),
+        "--assert",
+        "shallow",
+        "-o",
+        py.to_str().unwrap(),
+        "--report",
+        report.to_str().unwrap(),
+    ]);
+    assert_success(&out);
+    let py_text = fs::read_to_string(&py).unwrap();
+    assert!(py_text.contains("class Child(Base):"));
+    assert!(py_text.contains("removed @overload"));
+    assert!(py_text.contains("removed @codon.jit"));
+    assert!(py_text.contains("x: float"));
+    assert!(py_text.contains("arr: object"));
+    assert!(py_text.contains("-> complex"));
+    assert!(py_text.contains("float(1)"));
+    assert!(py_text.contains("float(2)"));
+    assert!(py_text.contains("float(x)"));
+
+    let report_text = fs::read_to_string(report).unwrap();
+    assert!(report_text.contains("codon-import-debug"));
+    assert!(report_text.contains("static-inheritance-lowered"));
+    assert!(report_text.contains("overload-ignored"));
+    assert!(report_text.contains("codon-jit-ignored"));
+    assert!(report_text.contains("ndarray-type-softened"));
+    assert!(report_text.contains("float32-precision"));
+}
+
+#[test]
+fn conservative_rewrites_do_not_touch_plain_strings_or_comments() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = write_file(
+        dir.path(),
+        "conservative.codon",
+        r#"# i32(1) static.range(3) List[i32]
+print("i32(1) static.range(3) List[i32]")
+value: i32 = i32(1)
+print(value)
+"#,
+    );
+    let py = dir.path().join("conservative.py");
+
+    let out = run(&[
+        "--dbg",
+        src.to_str().unwrap(),
+        "--assert",
+        "off",
+        "-o",
+        py.to_str().unwrap(),
+    ]);
+    assert_success(&out);
+    let py_text = fs::read_to_string(&py).unwrap();
+    assert!(py_text.contains("# i32(1) static.range(3) List[i32]"));
+    assert!(py_text.contains("print(\"i32(1) static.range(3) List[i32]\")"));
+    assert!(py_text.contains("value: int = int(1)"));
+
+    let ok = Command::new("python3").arg(py).output().unwrap();
+    assert_success(&ok);
+    assert_eq!(
+        String::from_utf8_lossy(&ok.stdout).trim(),
+        "i32(1) static.range(3) List[i32]\n1"
+    );
 }
 
 #[test]
