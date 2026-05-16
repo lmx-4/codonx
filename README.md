@@ -21,7 +21,7 @@ write a Codon-first .codon file
 The idea is not to pretend that Python and Codon are identical.  
 The idea is to make their differences **explicit, local, and testable**.
 
-Current status: **0.1.2 local AST/span rewrite MVP / experimental**.
+Current status: **0.1.3 local AST/span rewrite MVP / experimental**.
 
 ---
 
@@ -37,7 +37,8 @@ Recommended suffix:
 
 A codonx-compatible `.codon` file may contain:
 
-- Codon-style annotations such as `i32`, `u64`, `f64`;
+- Codon-style annotations such as `int`, `float`, `list[int]`;
+- low-level Codon numeric types such as `i32`, `u64`, `f32` when you explicitly need fixed-width semantics;
 - Codon constructs such as `@par`;
 - Codon Python interop such as `from python import ...`;
 - codonx target directives such as `#%ifpy` and `#%ifcodon`;
@@ -82,25 +83,25 @@ Explicitly unsupported:
 Install the Linux x86_64 release binary:
 
 ```bash
-tar -xzf codonx-v0.1.2-x86_64-linux.tar.gz
-install -m 0755 codonx-v0.1.2-x86_64-linux/codonx ~/.local/bin/codonx
+tar -xzf codonx-v0.1.3-x86_64-linux.tar.gz
+install -m 0755 codonx-v0.1.3-x86_64-linux/codonx ~/.local/bin/codonx
 codonx --version
 ```
 
 Expected version:
 
 ```text
-codonx 0.1.2
+codonx 0.1.3
 ```
 
 Create `hello.codon`:
 
 ```python
-def add_i32(a: i32, b: i32) -> i32:
-    c: i32 = a + b
+def add(a: int, b: int) -> int:
+    c: int = a + b
     return c
 
-print(add_i32(1, 2))
+print(add(1, 2))
 ```
 
 Generate a Python debug file:
@@ -130,7 +131,7 @@ codonx --version
 ```
 
 ```text
-codonx 0.1.2
+codonx 0.1.3
 ```
 
 ---
@@ -140,8 +141,8 @@ codonx 0.1.2
 Use `#%ifpy` when Python and Codon should use different code.
 
 ```python
-def square_all(xs: list[i32]) -> list[i32]:
-    out: list[i32] = [0 for _ in range(len(xs))]
+def square_all(xs: list[int]) -> list[int]:
+    out: list[int] = [0 for _ in range(len(xs))]
 
     #%ifpy
     for i in range(len(xs)):
@@ -185,33 +186,35 @@ When possible, codonx inserts runtime guards so Python can catch obvious Codon s
 Input:
 
 ```python
-def add_i32(a: i32, b: i32) -> i32:
-    c: i32 = a + b
+def add(a: int, b: int) -> int:
+    c: int = a + b
     return c
 ```
 
 Generated Python contains code like:
 
 ```python
-def add_i32(a: int, b: int) -> int:
-    __codonx_assert_value(a, "i32", "a", full=False)
-    __codonx_assert_value(b, "i32", "b", full=False)
+def add(a: int, b: int) -> int:
+    _codonx_assert_value(a, "int", "a", full=False)
+    _codonx_assert_value(b, "int", "b", full=False)
 
     c: int = a + b
-    __codonx_assert_value(c, "i32", "c", full=False)
+    _codonx_assert_value(c, "int", "c", full=False)
 
-    __codonx_ret = c
-    __codonx_assert_value(__codonx_ret, "i32", "<return>", full=False)
-    return __codonx_ret
+    _codonx_ret = c
+    _codonx_assert_value(_codonx_ret, "int", "<return>", full=False)
+    return _codonx_ret
 ```
 
-So this fails in Python debug mode:
+Use fixed-width types only when you mean fixed-width Codon semantics:
 
 ```python
-print(add_i32(2 ** 40, 1))
+def add_i32(a: i32, b: i32) -> i32:
+    return i32(a + b)
 ```
 
-because `2 ** 40` is outside `i32`.
+In that case Python debug guards keep the `i32` range intent. The standard
+Codon path should prefer `int`/`float`, matching Codon's Python-like defaults.
 
 This is the intended philosophy:
 
@@ -353,6 +356,10 @@ Unknown define names are errors.
 
 Python debug output uses a small whitelist of lowering rules.
 
+Codon's normal numeric path is Python-like: prefer `int` and `float`. The
+fixed-width aliases (`i32`, `u64`, `f32`, etc.) are low-level Codon features and
+codonx treats them as explicit range/precision intent rather than as defaults.
+
 | Codon-dialect input | Python debug behavior |
 |---|---|
 | `from python import math as m` | becomes `import math as m` |
@@ -388,20 +395,16 @@ Warning-only boundaries:
 
 Anything beyond this should use explicit target branches.
 
-0.0.7 is intended as the final regex/string-level expansion release. Future
-larger compatibility work should use a parser/AST layer or explicit directives
-rather than adding increasingly broad regex rewrites.
-
-### Real boundaries in 0.1.0
+### Real boundaries in 0.1.x
 
 The Python target is intentionally conservative:
 
-- Rewrites are line-oriented. General multi-line signatures, nested calls, and multi-line expressions are not mechanically rewritten.
+- Rewrites use local AST/span parsing plus conservative token-aware lowering. Full Codon parsing is still out of scope.
 - Plain comments and quoted strings are not rewritten.
-- Simple annotations are rewritten only in function signatures, simple annotated assignments, and simple annotation declarations.
+- Simple annotations are rewritten in supported function signatures, class signatures, annotated assignments, and annotation declarations.
 - Integer casts are checked only when `--assert` is enabled; with `--assert off`, simple integer casts lower to plain `int(...)`.
 - `@extend` blocks are omitted, not translated, because preserving them can shadow Python builtins such as `int` or `str`.
-- Codon release builds still use the real Codon type system. A Python debug run can pass while `codon build -release` fails on stricter Codon type constraints.
+- Codon release builds still use the real Codon type system. If you choose low-level types like `i32`, write matching low-level casts and literals; Python debug success is not a proof that Codon realization will accept mixed `int`/`i32` arithmetic.
 
 ---
 

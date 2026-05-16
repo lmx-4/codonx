@@ -36,27 +36,27 @@ pub fn guards_enabled(mode: AssertArg) -> bool {
 /// int, so integer guards use `type(v) is int` rather than `isinstance(v, int)`.
 pub fn python_guard_prelude() -> String {
     r#"# --- codonx semantic guard prelude ---
-def __codonx_type_error(name, ty, value):
+def _codonx_type_error(name, ty, value):
     raise AssertionError(
         f"codonx guard failed: {name} expected {ty}, got "
         f"{type(value).__name__}={value!r}"
     )
 
 
-def __codonx_guard_ok(value, ty, full=False):
+def _codonx_guard_ok(value, ty, full=False):
     try:
-        __codonx_assert_value(value, ty, "<union>", full)
+        _codonx_assert_value(value, ty, "<union>", full)
         return True
     except AssertionError:
         return False
 
 
-def __codonx_cast_int(value, ty):
+def _codonx_cast_int(value, ty):
     value = int(value)
-    return __codonx_assert_value(value, ty, "<cast>", full=False)
+    return _codonx_assert_value(value, ty, "<cast>", full=False)
 
 
-def __codonx_int_bounds(ty):
+def _codonx_int_bounds(ty):
     aliases = {"byte": "i8"}
     ty = aliases.get(ty, ty)
     if ty.startswith("__codonx_"):
@@ -87,7 +87,7 @@ def __codonx_int_bounds(ty):
     return None
 
 
-def __codonx_split_top_level_commas(text):
+def _codonx_split_top_level_commas(text):
     parts = []
     depth = 0
     start = 0
@@ -110,67 +110,67 @@ def __codonx_split_top_level_commas(text):
     return parts
 
 
-def __codonx_inner_type(ty, prefix):
+def _codonx_inner_type(ty, prefix):
     if not (ty.startswith(prefix + "[") and ty.endswith("]")):
         return None
     return ty[len(prefix) + 1:-1].strip()
 
 
-def __codonx_assert_value(value, ty, name="<value>", full=False):
+def _codonx_assert_value(value, ty, name="<value>", full=False):
     ty = str(ty).strip()
 
     if ty in ("None", "NoneType"):
         if value is not None:
-            __codonx_type_error(name, ty, value)
+            _codonx_type_error(name, ty, value)
         return value
 
     # Common aliases produced by the Python debug target after type rewrite.
     if ty in ("Any", "object", "pyobj"):
         return value
 
-    inner = __codonx_inner_type(ty, "Optional")
+    inner = _codonx_inner_type(ty, "Optional")
     if inner is not None:
         if value is None:
             return value
-        return __codonx_assert_value(value, inner, name, full)
+        return _codonx_assert_value(value, inner, name, full)
 
-    inner = __codonx_inner_type(ty, "Union")
+    inner = _codonx_inner_type(ty, "Union")
     if inner is not None:
-        parts = __codonx_split_top_level_commas(inner)
-        if any(__codonx_guard_ok(value, part, full) for part in parts):
+        parts = _codonx_split_top_level_commas(inner)
+        if any(_codonx_guard_ok(value, part, full) for part in parts):
             return value
-        __codonx_type_error(name, ty, value)
+        _codonx_type_error(name, ty, value)
 
-    int_bounds = __codonx_int_bounds(ty)
+    int_bounds = _codonx_int_bounds(ty)
     if int_bounds is not None:
         lo, hi = int_bounds
         if type(value) is not int or not (lo <= value <= hi):
-            __codonx_type_error(name, ty, value)
+            _codonx_type_error(name, ty, value)
         return value
 
     if ty in ("float", "f32", "f64", "float32"):
         if type(value) is not float:
-            __codonx_type_error(name, ty, value)
+            _codonx_type_error(name, ty, value)
         return value
 
     if ty in ("float16", "bfloat16", "float128"):
         if type(value) is not float:
-            __codonx_type_error(name, ty, value)
+            _codonx_type_error(name, ty, value)
         return value
 
     if ty == "complex":
         if type(value) is not complex:
-            __codonx_type_error(name, ty, value)
+            _codonx_type_error(name, ty, value)
         return value
 
     if ty == "bool":
         if type(value) is not bool:
-            __codonx_type_error(name, ty, value)
+            _codonx_type_error(name, ty, value)
         return value
 
     if ty == "str":
         if type(value) is not str:
-            __codonx_type_error(name, ty, value)
+            _codonx_type_error(name, ty, value)
         try:
             value.encode("ascii")
         except UnicodeEncodeError:
@@ -179,48 +179,48 @@ def __codonx_assert_value(value, ty, name="<value>", full=False):
             )
         return value
 
-    inner = __codonx_inner_type(ty, "list")
+    inner = _codonx_inner_type(ty, "list")
     if inner is not None:
         if type(value) is not list:
-            __codonx_type_error(name, ty, value)
+            _codonx_type_error(name, ty, value)
         if full:
             for i, item in enumerate(value):
-                __codonx_assert_value(item, inner, f"{name}[{i}]", full)
+                _codonx_assert_value(item, inner, f"{name}[{i}]", full)
         return value
 
-    inner = __codonx_inner_type(ty, "set")
+    inner = _codonx_inner_type(ty, "set")
     if inner is not None:
         if type(value) is not set:
-            __codonx_type_error(name, ty, value)
+            _codonx_type_error(name, ty, value)
         if full:
             for item in value:
-                __codonx_assert_value(item, inner, f"{name}{'{...}'}", full)
+                _codonx_assert_value(item, inner, f"{name}{'{...}'}", full)
         return value
 
-    inner = __codonx_inner_type(ty, "dict")
+    inner = _codonx_inner_type(ty, "dict")
     if inner is not None:
         if type(value) is not dict:
-            __codonx_type_error(name, ty, value)
-        parts = __codonx_split_top_level_commas(inner)
+            _codonx_type_error(name, ty, value)
+        parts = _codonx_split_top_level_commas(inner)
         if len(parts) == 2 and full:
             kt, vt = parts
             for k, v in value.items():
-                __codonx_assert_value(k, kt, f"key of {name}", full)
-                __codonx_assert_value(v, vt, f"{name}[{k!r}]", full)
+                _codonx_assert_value(k, kt, f"key of {name}", full)
+                _codonx_assert_value(v, vt, f"{name}[{k!r}]", full)
         return value
 
-    inner = __codonx_inner_type(ty, "tuple")
+    inner = _codonx_inner_type(ty, "tuple")
     if inner is not None:
         if type(value) is not tuple:
-            __codonx_type_error(name, ty, value)
-        parts = __codonx_split_top_level_commas(inner)
+            _codonx_type_error(name, ty, value)
+        parts = _codonx_split_top_level_commas(inner)
         if parts and parts[-1] != "..." and len(value) != len(parts):
             raise AssertionError(
                 f"codonx guard failed: {name} expected {ty}, got tuple length {len(value)}"
             )
         if full and (not parts or parts[-1] != "..."):
             for i, item_ty in enumerate(parts):
-                __codonx_assert_value(value[i], item_ty, f"{name}[{i}]", full)
+                _codonx_assert_value(value[i], item_ty, f"{name}[{i}]", full)
         return value
 
     # Unknown or unsupported types are not guessed. codonx keeps them as a soft
@@ -241,7 +241,7 @@ pub fn guard_stmt(name: &str, ty: &str, mode: AssertArg, indent: usize) -> Optio
     let ty_lit = py_string_lit(ty.trim());
     let name_lit = py_string_lit(name.trim());
     Some(format!(
-        "{}__codonx_assert_value({}, {}, {}, full={})",
+        "{}_codonx_assert_value({}, {}, {}, full={})",
         spaces,
         name.trim(),
         ty_lit,
@@ -302,14 +302,14 @@ pub fn guard_return_lines(
     let spaces = " ".repeat(indent);
     let ty_lit = py_string_lit(ret_ty.trim());
     vec![
-        format!("{}__codonx_ret = {}", spaces, expr),
+        format!("{}_codonx_ret = {}", spaces, expr),
         format!(
-            "{}__codonx_assert_value(__codonx_ret, {}, '<return>', full={})",
+            "{}_codonx_assert_value(_codonx_ret, {}, '<return>', full={})",
             spaces,
             ty_lit,
             py_full_flag(mode)
         ),
-        format!("{}return __codonx_ret", spaces),
+        format!("{}return _codonx_ret", spaces),
     ]
 }
 

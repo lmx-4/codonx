@@ -65,6 +65,10 @@ Examples:
 - `i32` annotation -> `int` annotation in Python output
 - explicit runtime guard for `i32` range
 
+Normal Codon code should prefer standard `int` and `float`. Fixed-width aliases
+such as `i32` and `u64` are treated as explicit low-level intent, not as the
+default numeric model.
+
 Anything requiring real semantic analysis should be handled with explicit target branches.
 
 ## Why Not `if DEBUG:`?

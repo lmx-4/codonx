@@ -1,6 +1,6 @@
 [package]
 name = "codonx"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "Codon-first dual-target preprocessor: Python debug target and Codon release target."

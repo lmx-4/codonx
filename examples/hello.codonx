@@ -1,5 +1,5 @@
-def add_i32(a: i32, b: i32) -> i32:
-    c: i32 = a + b
+def add(a: int, b: int) -> int:
+    c: int = a + b
     return c
 
-print(add_i32(1, 2))
+print(add(1, 2))

@@ -21,6 +21,18 @@ fn run(args: &[&str]) -> std::process::Output {
     Command::new(bin()).args(args).output().unwrap()
 }
 
+fn local_codon_bin() -> Option<String> {
+    if let Ok(path) = std::env::var("CODONX_CODON_BIN") {
+        return Some(path);
+    }
+    Command::new("codon")
+        .arg("--version")
+        .output()
+        .ok()
+        .filter(|out| out.status.success())
+        .map(|_| "codon".to_string())
+}
+
 fn assert_success(out: &std::process::Output) {
     assert!(
         out.status.success(),
@@ -83,6 +95,50 @@ fn debug_and_codon_targets_select_opposite_branches() {
     let codon_text = fs::read_to_string(codon).unwrap();
     assert!(codon_text.contains("@par(schedule=\"dynamic\")"));
     assert!(!codon_text.contains("#%ifpy"));
+}
+
+#[test]
+fn codon_target_from_pythonic_int_source_runs_with_local_codon_when_available() {
+    let Some(codon_bin) = local_codon_bin() else {
+        eprintln!("skipping local Codon compile smoke test: codon not found");
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let src = write_file(
+        dir.path(),
+        "pythonic_int.codon",
+        r#"def square_all(xs: list[int]) -> list[int]:
+    out: list[int] = [0 for _ in range(len(xs))]
+    #%ifpy
+    for i in range(len(xs)):
+        out[i] = xs[i] * xs[i]
+    #%else
+    @par(schedule="dynamic")
+    for i in range(len(xs)):
+        out[i] = xs[i] * xs[i]
+    #%endif
+    return out
+
+print(square_all([1, 2, 3]))
+"#,
+    );
+    let codon = dir.path().join("pythonic_int_pre.codon");
+
+    let out = run(&[
+        "codon",
+        src.to_str().unwrap(),
+        "-o",
+        codon.to_str().unwrap(),
+    ]);
+    assert_success(&out);
+
+    let run_out = Command::new(codon_bin)
+        .arg("run")
+        .arg(&codon)
+        .output()
+        .unwrap();
+    assert_success(&run_out);
+    assert_eq!(String::from_utf8_lossy(&run_out.stdout).trim(), "[1, 4, 9]");
 }
 
 #[test]
@@ -301,8 +357,8 @@ print(sum_squares([1, 2, 3]))
     assert!(!py_text.contains("#%define CODON_DEBUG"));
     assert!(!py_text.contains("\n    @par"));
     assert!(!py_text.contains("\n@gpu.kernel"));
-    assert!(py_text.contains("__codonx_assert_value(x, \"i32\""));
-    assert!(py_text.contains("__codonx_assert_value(xs, \"list[i32]\""));
+    assert!(py_text.contains("_codonx_assert_value(x, \"i32\""));
+    assert!(py_text.contains("_codonx_assert_value(xs, \"list[i32]\""));
     assert!(py_text.contains("full=True"));
 
     let report_text = fs::read_to_string(&report).unwrap();
@@ -510,9 +566,9 @@ print(add_i32(1, 2))
         String::from_utf8_lossy(&out.stderr)
     );
     let py_text = fs::read_to_string(&py).unwrap();
-    assert!(py_text.contains("__codonx_assert_value(a, \"i32\""));
-    assert!(py_text.contains("__codonx_assert_value(c, \"i32\""));
-    assert!(py_text.contains("__codonx_assert_value(__codonx_ret, \"i32\""));
+    assert!(py_text.contains("_codonx_assert_value(a, \"i32\""));
+    assert!(py_text.contains("_codonx_assert_value(c, \"i32\""));
+    assert!(py_text.contains("_codonx_assert_value(_codonx_ret, \"i32\""));
 
     let py_run = Command::new("python3").arg(py).output().unwrap();
     assert!(
@@ -549,9 +605,9 @@ print(narrow(127, 255, -128))
     assert_success(&out);
     let py_text = fs::read_to_string(&py).unwrap();
     assert!(py_text.contains("def narrow(a: int, b: int, c: int) -> int:"));
-    assert!(py_text.contains("__codonx_assert_value(a, \"Int[8]\""));
-    assert!(py_text.contains("__codonx_assert_value(b, \"UInt[8]\""));
-    assert!(py_text.contains("__codonx_assert_value(c, \"i8\""));
+    assert!(py_text.contains("_codonx_assert_value(a, \"Int[8]\""));
+    assert!(py_text.contains("_codonx_assert_value(b, \"UInt[8]\""));
+    assert!(py_text.contains("_codonx_assert_value(c, \"i8\""));
 
     let ok = Command::new("python3").arg(&py).output().unwrap();
     assert_success(&ok);
@@ -720,7 +776,7 @@ fn assert_off_skips_guard_prelude_and_guard_warnings() {
 
     let py_text = fs::read_to_string(py).unwrap();
     assert!(!py_text.contains("codonx semantic guard prelude"));
-    assert!(!py_text.contains("__codonx_assert_value"));
+    assert!(!py_text.contains("_codonx_assert_value"));
 
     let report_text = fs::read_to_string(report).unwrap();
     assert!(report_text.contains("\"unknown_guard_types\": 0"));
@@ -762,9 +818,10 @@ print(ok())
     ]);
     assert_success(&out);
     let py_text = fs::read_to_string(&py).unwrap();
-    assert!(py_text.contains("__codonx_cast_int(127, \"__codonx_i8\")"));
-    assert!(py_text.contains("__codonx_cast_int(255, \"__codonx_UInt[8]\")"));
-    assert!(py_text.contains("__codonx_cast_int(max(a, b), \"__codonx_i32\")"));
+    assert!(py_text.contains("_codonx_cast_int(127, \"__codonx_i8\")"));
+    assert!(py_text.contains("_codonx_cast_int(255, \"__codonx_UInt[8]\")"));
+    assert!(py_text.contains("_codonx_cast_int(max(a, b), \"__codonx_i32\")"));
+    assert!(!py_text.contains("i32("));
     assert!(py_text.contains("float(1)"));
 
     let ok = Command::new("python3").arg(&py).output().unwrap();
@@ -1169,6 +1226,94 @@ print(check(2, [1, 2]))
 
     let report_text = fs::read_to_string(report).unwrap();
     assert!(report_text.contains("assert-type-lowered"));
+}
+
+#[test]
+fn multiline_expression_blocks_rewrite_supported_tokens() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = write_file(
+        dir.path(),
+        "multiline_expr.codon",
+        r#"values: list[i32] = [
+    i32(1),
+    i32(max(2, 1)),
+    len("i32(3)"),
+]
+total = sum(
+    i32(x)
+    for x in static.range(3)
+)
+print(values, total)  # i32(99) static.range(9)
+"#,
+    );
+    let py = dir.path().join("multiline_expr.py");
+    let report = dir.path().join("multiline_expr.json");
+
+    let out = run(&[
+        "--dbg",
+        src.to_str().unwrap(),
+        "--assert",
+        "off",
+        "-o",
+        py.to_str().unwrap(),
+        "--report",
+        report.to_str().unwrap(),
+    ]);
+    assert_success(&out);
+
+    let py_text = fs::read_to_string(&py).unwrap();
+    assert!(py_text.contains("values: list[int] = ["));
+    assert!(py_text.contains("int(1),"));
+    assert!(py_text.contains("int(max(2, 1)),"));
+    assert!(py_text.contains("len(\"i32(3)\")"));
+    assert!(py_text.contains("for x in range(3)"));
+    assert!(py_text.contains("# i32(99) static.range(9)"));
+
+    let ok = Command::new("python3").arg(py).output().unwrap();
+    assert_success(&ok);
+    assert_eq!(String::from_utf8_lossy(&ok.stdout).trim(), "[1, 2, 6] 3");
+
+    let report_text = fs::read_to_string(report).unwrap();
+    assert!(report_text.contains("static-range-lowered"));
+}
+
+#[test]
+fn class_method_guards_do_not_trigger_python_name_mangling() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = write_file(
+        dir.path(),
+        "class_guards.codon",
+        r#"class Accumulator:
+    def __init__(self, base: i32):
+        self.base = base
+
+    def add(self, x: i32) -> i32:
+        y: i32 = self.base + x
+        return y
+
+print(Accumulator(5).add(7))
+"#,
+    );
+    let py = dir.path().join("class_guards.py");
+
+    let out = run(&[
+        "--dbg",
+        src.to_str().unwrap(),
+        "--assert",
+        "full",
+        "-o",
+        py.to_str().unwrap(),
+    ]);
+    assert_success(&out);
+
+    let py_text = fs::read_to_string(&py).unwrap();
+    assert!(py_text.contains("_codonx_assert_value(base, \"i32\""));
+    assert!(py_text.contains("_codonx_assert_value(_codonx_ret, \"i32\""));
+    assert!(!py_text.contains("__codonx_assert_value"));
+
+    let ok = Command::new("python3").arg(py).output().unwrap();
+    assert_success(&ok);
+    assert_eq!(String::from_utf8_lossy(&ok.stdout).trim(), "12");
 }
 
 #[test]

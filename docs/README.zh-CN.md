@@ -99,12 +99,15 @@ codonx 只是先把 `.codonx` 预处理成 `.codon`，然后调用 Codon 编译�
 
 ## 类型语义护栏
 
-Python 的 `int` 是任意精度，而 Codon 的整数语义更接近固定宽度整数。
+Codon 的常规数值路径接近 Python 语法：优先使用 `int` 和 `float`。
+其中 `int` 是 64 位有符号整数，`float` 是 64 位浮点数。
+
+`i32`、`u64`、`f32` 等是低层固定宽度类型，适合你明确需要位宽语义时使用。
 
 因此 Python Debug Target 可以插入断言，例如：
 
 ```python
-__codonx_assert_value(x, "i32", "x", full=False)
+_codonx_assert_value(x, "i32", "x", full=False)
 ```
 
 用于提前发现：

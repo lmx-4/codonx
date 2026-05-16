@@ -1,5 +1,5 @@
-def square_all(xs: list[i32]) -> list[i32]:
-    out: list[i32] = [0 for _ in range(len(xs))]
+def square_all(xs: list[int]) -> list[int]:
+    out: list[int] = [0 for _ in range(len(xs))]
     #%ifpy
     for i in range(len(xs)):
         out[i] = xs[i] * xs[i]

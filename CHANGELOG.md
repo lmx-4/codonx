@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.3 - 2026-05-16
+
+Codon-standard numeric semantics and release-target smoke coverage.
+
+- Reoriented examples and documentation around Codon's Python-like `int`/`float` defaults, keeping `i32`, `u64`, `f32`, and related aliases as explicit low-level fixed-width intent.
+- Added conservative multiline expression-block lowering for Python debug output, including supported casts, `static.range`, and annotated assignment guards across bracketed blocks.
+- Fixed Python guard helper names to avoid class-scope name mangling in generated methods.
+- Made scalar cast lowering iterate to a stable result so nested supported casts are not left as unresolved Python names.
+- Added optional local Codon compile/run smoke coverage for generated Codon targets when a Codon compiler is available.
+- Updated examples so both Python debug output and Codon release output run successfully on the standard `int` path.
+
 ## 0.1.2 - 2026-05-16
 
 Regex residual closure and assert robustness release.

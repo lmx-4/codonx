@@ -160,6 +160,13 @@ fn rewrite_py_lines(
             continue;
         }
 
+        if let Some(consumed) =
+            rewrite_multiline_expression(file, lines, idx, assert_mode, report, &mut out)
+        {
+            idx += consumed;
+            continue;
+        }
+
         let Some(rewritten) = rewrite_py_line(file, line, assert_mode, report) else {
             idx += 1;
             continue;
@@ -285,6 +292,107 @@ fn rewrite_multiline_header(
     let rewritten = lower_class_signature(file, first.no, &raw, report);
     out.extend(rewritten.lines().map(str::to_string));
     Some(end - start + 1)
+}
+
+fn rewrite_multiline_expression(
+    file: &str,
+    lines: &[SourceLine],
+    start: usize,
+    assert_mode: AssertArg,
+    report: &mut Report,
+    out: &mut Vec<String>,
+) -> Option<usize> {
+    let first = &lines[start];
+    if first.in_triple_string || first.trimmed.trim_start().starts_with('#') {
+        return None;
+    }
+    if first.trimmed.trim().is_empty() {
+        return None;
+    }
+    let trimmed = first.trimmed.trim_start();
+    if trimmed.starts_with("def ") || trimmed.starts_with("class ") || trimmed.starts_with('@') {
+        return None;
+    }
+
+    let end = collect_expression_end(lines, start)?;
+    if end == start {
+        return None;
+    }
+
+    let raw = lines[start..=end]
+        .iter()
+        .map(|line| line.raw.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut rewritten = raw.clone();
+    rewritten = lower_static_range(file, first.no, &rewritten, report);
+    rewritten = lower_scalar_casts(file, first.no, &rewritten, assert_mode, report);
+    rewritten = lower_assert_statement(file, first.no, &rewritten, report);
+
+    if let Some(ann) = crate::ast::parse_ann_assign_line(&raw) {
+        rewritten =
+            crate::ast::rewrite_ann_assign_for_python(&rewritten).unwrap_or(rewritten.clone());
+        out.extend(rewritten.lines().map(str::to_string));
+
+        let ty = canonical_guard_type(&ann.ty.text);
+        record_guard_type_warnings(file, first.no, &ty, assert_mode, report);
+        if ann.has_value {
+            let guards = guard_stmts_for_assignment(&ann.name, &ty, assert_mode, first.indent);
+            report.inserted_guards += guards.len();
+            out.extend(guards);
+        }
+        return Some(end - start + 1);
+    }
+
+    out.extend(rewritten.lines().map(str::to_string));
+    Some(end - start + 1)
+}
+
+fn collect_expression_end(lines: &[SourceLine], start: usize) -> Option<usize> {
+    let first = lines.get(start)?;
+    let (mut depth, saw_open) = delimiter_delta(&first.raw);
+    if !saw_open || depth <= 0 {
+        return None;
+    }
+
+    for (idx, line) in lines.iter().enumerate().skip(start + 1) {
+        if line.in_triple_string {
+            return None;
+        }
+        let (delta, _) = delimiter_delta(&line.raw);
+        depth += delta;
+        if depth < 0 {
+            return None;
+        }
+        if depth == 0 {
+            return Some(idx);
+        }
+    }
+    None
+}
+
+fn delimiter_delta(line: &str) -> (i32, bool) {
+    let mut depth = 0_i32;
+    let mut saw_open = false;
+    let mut i = 0;
+    while i < line.len() {
+        let ch = line[i..].chars().next().unwrap();
+        match ch {
+            '#' => break,
+            '\'' | '"' => {
+                i = skip_string_literal(line, i);
+                continue;
+            }
+            '(' | '[' | '{' => {
+                depth += 1;
+                saw_open = true;
+            }
+            ')' | ']' | '}' => depth -= 1,
+            _ => {}
+        }
+        i += ch.len_utf8();
+    }
+    (depth, saw_open)
 }
 
 fn collect_header_end(lines: &[SourceLine], start: usize) -> Option<usize> {
@@ -572,9 +680,19 @@ fn lower_scalar_casts(
     assert_mode: AssertArg,
     report: &mut Report,
 ) -> String {
-    let (out, stats) = rewrite_scalar_cast_tokens(line, guards_enabled(assert_mode));
-    report.lowered_casts += stats.int_casts + stats.float_casts;
-    if stats.lossy_float_casts > 0 {
+    let mut out = line.to_string();
+    let mut total_stats = CastRewriteStats::default();
+    for _ in 0..8 {
+        let (next, stats) = rewrite_scalar_cast_tokens(&out, guards_enabled(assert_mode));
+        let changed = next != out;
+        total_stats.add(stats);
+        out = next;
+        if !changed {
+            break;
+        }
+    }
+    report.lowered_casts += total_stats.int_casts + total_stats.float_casts;
+    if total_stats.lossy_float_casts > 0 {
         report.warn_semantic(
             file,
             line_no,
@@ -605,6 +723,14 @@ struct CastRewriteStats {
     int_casts: usize,
     float_casts: usize,
     lossy_float_casts: usize,
+}
+
+impl CastRewriteStats {
+    fn add(&mut self, other: Self) {
+        self.int_casts += other.int_casts;
+        self.float_casts += other.float_casts;
+        self.lossy_float_casts += other.lossy_float_casts;
+    }
 }
 
 fn rewrite_static_range_tokens(line: &str) -> (String, usize) {
@@ -671,7 +797,7 @@ fn rewrite_scalar_cast_tokens(line: &str, guard_casts: bool) -> (String, CastRew
                     stats.int_casts += 1;
                     if guard_casts {
                         out.push_str(&format!(
-                            "__codonx_cast_int({}, \"__codonx_{}\")",
+                            "_codonx_cast_int({}, \"__codonx_{}\")",
                             expr, label
                         ));
                     } else {
