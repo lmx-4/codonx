@@ -6,10 +6,7 @@ use crate::guard::{
 };
 use crate::report::Report;
 use crate::source::SourceLine;
-use crate::type_parse::{
-    parse_ann_assign, parse_def_signature, split_top_level_commas, translate_annotations_in_line,
-};
-use regex::Regex;
+use crate::type_parse::translate_annotations_in_line;
 
 #[derive(Debug, Clone)]
 struct FunctionCtx {
@@ -57,10 +54,13 @@ fn rewrite_py_lines(
         out.push(python_guard_prelude().trim_end().to_string());
     }
 
-    for line in lines {
+    let mut idx = 0;
+    while idx < lines.len() {
+        let line = &lines[idx];
         if let Some((indent, saw_class)) = skip_extend_block {
             if line.trimmed.trim().is_empty() {
                 out.push(line.raw.clone());
+                idx += 1;
                 continue;
             }
             if !saw_class
@@ -73,6 +73,7 @@ fn rewrite_py_lines(
                     line.trimmed.trim()
                 ));
                 skip_extend_block = Some((indent, true));
+                idx += 1;
                 continue;
             }
             if saw_class && line.indent > indent {
@@ -81,6 +82,7 @@ fn rewrite_py_lines(
                     " ".repeat(line.indent),
                     line.trimmed.trim()
                 ));
+                idx += 1;
                 continue;
             }
             skip_extend_block = None;
@@ -89,6 +91,7 @@ fn rewrite_py_lines(
         if let Some((indent, saw_def)) = skip_lowlevel_block {
             if line.trimmed.trim().is_empty() {
                 out.push(line.raw.clone());
+                idx += 1;
                 continue;
             }
             if !saw_def && line.indent == indent && line.trimmed.trim_start().starts_with("def ") {
@@ -98,6 +101,7 @@ fn rewrite_py_lines(
                     line.trimmed.trim()
                 ));
                 skip_lowlevel_block = Some((indent, true));
+                idx += 1;
                 continue;
             }
             if saw_def && line.indent > indent {
@@ -106,6 +110,7 @@ fn rewrite_py_lines(
                     " ".repeat(line.indent),
                     line.trimmed.trim()
                 ));
+                idx += 1;
                 continue;
             }
             skip_lowlevel_block = None;
@@ -123,6 +128,7 @@ fn rewrite_py_lines(
                 " ".repeat(line.indent)
             ));
             skip_lowlevel_block = Some((line.indent, false));
+            idx += 1;
             continue;
         }
 
@@ -138,6 +144,7 @@ fn rewrite_py_lines(
                 " ".repeat(line.indent)
             ));
             skip_extend_block = Some((line.indent, false));
+            idx += 1;
             continue;
         }
 
@@ -147,14 +154,26 @@ fn rewrite_py_lines(
             }
         }
 
+        if let Some(consumed) =
+            rewrite_multiline_header(file, lines, idx, assert_mode, report, &mut out, &mut funcs)
+        {
+            idx += consumed;
+            continue;
+        }
+
         let Some(rewritten) = rewrite_py_line(file, line, assert_mode, report) else {
+            idx += 1;
             continue;
         };
 
-        if let Some(sig) = parse_def_signature(&line.raw, line.indent) {
-            let ret = sig.ret.as_deref().map(canonical_guard_type);
-            out.push(translate_annotations_in_line(&rewritten));
-            let params = normalize_param_pairs(sig.params.into_iter().map(|p| (p.name, p.ty)));
+        if let Some(sig) = crate::ast::parse_def_signature_line(&line.raw, line.indent) {
+            let (params, ret) = crate::ast::def_guard_signature(&sig);
+            let ret = ret.as_deref().map(canonical_guard_type);
+            out.push(
+                crate::ast::rewrite_def_signature_for_python(&rewritten)
+                    .unwrap_or_else(|| translate_annotations_in_line(&rewritten)),
+            );
+            let params = normalize_param_pairs(params.into_iter().map(|p| (p.name, p.ty)));
             for (_, ty) in &params {
                 record_guard_type_warnings(file, line.no, ty, assert_mode, report);
             }
@@ -168,23 +187,24 @@ fn rewrite_py_lines(
                 indent: line.indent,
                 ret,
             });
+            idx += 1;
             continue;
         }
 
-        if let Some((name, ty)) = parse_ann_assign(&line.raw) {
-            let translated = translate_annotations_in_line(&rewritten);
-            out.push(translated);
+        if let Some(ann) = crate::ast::parse_ann_assign_line(&line.raw) {
+            out.push(
+                crate::ast::rewrite_ann_assign_for_python(&rewritten)
+                    .unwrap_or_else(|| translate_annotations_in_line(&rewritten)),
+            );
 
-            let ty = canonical_guard_type(&ty);
+            let ty = canonical_guard_type(&ann.ty.text);
             record_guard_type_warnings(file, line.no, &ty, assert_mode, report);
-            let guards = guard_stmts_for_assignment(&name, &ty, assert_mode, line.indent);
-            report.inserted_guards += guards.len();
-            out.extend(guards);
-            continue;
-        }
-
-        if is_simple_ann_decl(&line.raw) {
-            out.push(translate_annotations_in_line(&rewritten));
+            if ann.has_value {
+                let guards = guard_stmts_for_assignment(&ann.name, &ty, assert_mode, line.indent);
+                report.inserted_guards += guards.len();
+                out.extend(guards);
+            }
+            idx += 1;
             continue;
         }
 
@@ -194,11 +214,13 @@ fn rewrite_py_lines(
                     guard_return_lines(&rewritten, ctx.ret.as_deref(), assert_mode, line.indent);
                 report.inserted_guards += guarded.len().saturating_sub(1);
                 out.extend(guarded);
+                idx += 1;
                 continue;
             }
         }
 
         out.push(rewritten.clone());
+        idx += 1;
     }
 
     let mut text = out.join("\n");
@@ -206,6 +228,89 @@ fn rewrite_py_lines(
         text.push('\n');
     }
     text
+}
+
+fn rewrite_multiline_header(
+    file: &str,
+    lines: &[SourceLine],
+    start: usize,
+    assert_mode: AssertArg,
+    report: &mut Report,
+    out: &mut Vec<String>,
+    funcs: &mut Vec<FunctionCtx>,
+) -> Option<usize> {
+    let first = &lines[start];
+    if first.in_triple_string || first.trimmed.trim_start().starts_with('#') {
+        return None;
+    }
+    let trimmed = first.trimmed.trim_start();
+    if !(trimmed.starts_with("def ") || trimmed.starts_with("class ")) {
+        return None;
+    }
+
+    let end = collect_header_end(lines, start)?;
+    if end == start {
+        return None;
+    }
+
+    let raw = lines[start..=end]
+        .iter()
+        .map(|line| line.raw.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    if trimmed.starts_with("def ") {
+        let sig = crate::ast::parse_def_signature_line(&raw, first.indent)?;
+        let (params, ret) = crate::ast::def_guard_signature(&sig);
+        let ret = ret.as_deref().map(canonical_guard_type);
+        let rewritten = crate::ast::rewrite_def_signature_for_python(&raw)?;
+        out.extend(rewritten.lines().map(str::to_string));
+
+        let params = normalize_param_pairs(params.into_iter().map(|p| (p.name, p.ty)));
+        for (_, ty) in &params {
+            record_guard_type_warnings(file, first.no, ty, assert_mode, report);
+        }
+        if let Some(ret_ty) = ret.as_deref() {
+            record_guard_type_warnings(file, first.no, ret_ty, assert_mode, report);
+        }
+        let guards = guard_stmts_for_params(&params, assert_mode, first.indent + 4);
+        report.inserted_guards += guards.len();
+        out.extend(guards);
+        funcs.push(FunctionCtx {
+            indent: first.indent,
+            ret,
+        });
+        return Some(end - start + 1);
+    }
+
+    let rewritten = lower_class_signature(file, first.no, &raw, report);
+    out.extend(rewritten.lines().map(str::to_string));
+    Some(end - start + 1)
+}
+
+fn collect_header_end(lines: &[SourceLine], start: usize) -> Option<usize> {
+    let mut depth = 0_i32;
+    let mut saw_open = false;
+    for (idx, line) in lines.iter().enumerate().skip(start) {
+        if line.in_triple_string {
+            return None;
+        }
+        for ch in line.raw.chars() {
+            match ch {
+                '(' | '[' | '{' => {
+                    depth += 1;
+                    saw_open = true;
+                }
+                ')' | ']' | '}' => depth -= 1,
+                ':' if depth == 0 => return Some(idx),
+                _ => {}
+            }
+        }
+        if idx > start && !saw_open {
+            return None;
+        }
+    }
+    None
 }
 
 fn rewrite_py_line(
@@ -318,25 +423,31 @@ fn rewrite_py_line(
         );
     }
 
-    if trimmed.starts_with("from python import ")
-        && (trimmed.contains("->") || trimmed.contains('(') || trimmed.contains(')'))
-    {
-        report.warn(
-            file,
-            line.no,
-            "typed-python-interop-unsupported",
-            "typed Python interop import is outside regex-level lowering; use #%ifpy/#%ifcodon to provide an explicit Python import or wrapper",
-        );
-    }
-
-    let mut out = if let Some(import_line) = rewrite_from_python_import(&line.raw) {
-        report.rewritten_imports += 1;
-        import_line
+    let mut out = if let Some(import) = crate::ast::parse_from_python_import_line(&line.raw) {
+        match import {
+            crate::ast::FromPythonImport::Module { replacement } => {
+                report.rewritten_imports += 1;
+                replacement
+            }
+            crate::ast::FromPythonImport::Typed => {
+                report.rewritten_imports += 1;
+                report.warn(
+                    file,
+                    line.no,
+                    "typed-python-interop-unsupported",
+                    "typed Python interop import cannot be represented as a plain Python import; use #%ifpy/#%ifcodon to provide an explicit Python import or wrapper",
+                );
+                format!(
+                    "{}# codonx: unsupported typed Python interop; use #%ifpy/#%ifcodon to provide a Python import/wrapper",
+                    " ".repeat(line.indent)
+                )
+            }
+        }
     } else {
         line.raw.clone()
     };
 
-    out = lower_static_inheritance(file, line.no, &out, report);
+    out = lower_class_signature(file, line.no, &out, report);
     out = erase_type_params_from_signature(file, line.no, &out, report);
     out = lower_static_range(file, line.no, &out, report);
     out = lower_scalar_casts(file, line.no, &out, assert_mode, report);
@@ -388,15 +499,20 @@ fn contains_ndarray_type(trimmed: &str) -> bool {
     trimmed.contains("ndarray[")
 }
 
-fn lower_static_inheritance(file: &str, line_no: usize, line: &str, report: &mut Report) -> String {
-    if !line.trim_start().starts_with("class ") {
+fn lower_class_signature(file: &str, line_no: usize, line: &str, report: &mut Report) -> String {
+    let Some(rewritten) = crate::ast::rewrite_class_signature_for_python(line) else {
         return line.to_string();
+    };
+    if rewritten.erased_type_params > 0 {
+        report.erased_generics += rewritten.erased_type_params;
+        report.warn_semantic(
+            file,
+            line_no,
+            "generic-type-param-erased",
+            "Codon class generic type parameters written as `T: type` are lowered to Python 3.12 type parameter syntax",
+        );
     }
-    let out = Regex::new(r"class\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(\s*Static\[([^\]]+)\]\s*\)")
-        .unwrap()
-        .replace(line, "class $1($2)")
-        .to_string();
-    if out != line {
+    if rewritten.lowered_static_inheritance {
         report.warn_semantic(
             file,
             line_no,
@@ -404,7 +520,7 @@ fn lower_static_inheritance(file: &str, line_no: usize, line: &str, report: &mut
             "Codon Static[...] inheritance is lowered to normal Python inheritance in debug target",
         );
     }
-    out
+    rewritten.line
 }
 
 fn erase_type_params_from_signature(
@@ -413,57 +529,32 @@ fn erase_type_params_from_signature(
     line: &str,
     report: &mut Report,
 ) -> String {
-    let Some(open) = line.find('(') else {
+    let Some(sig) = crate::ast::parse_def_signature_line(line, leading_indent(line)) else {
         return line.to_string();
     };
-    let Some(close) = find_matching_paren(line, open) else {
+    let erased = sig
+        .params
+        .iter()
+        .filter(|param| param.is_type_param)
+        .count();
+    let Some(out) = crate::ast::rewrite_def_signature_for_python(line) else {
         return line.to_string();
     };
-    if !line[..open].trim_start().starts_with("def ") {
-        return line.to_string();
+    if erased > 0 {
+        report.erased_generics += erased;
+        report.warn_semantic(
+            file,
+            line_no,
+            "generic-type-param-erased",
+            "Codon generic type parameters passed as `type` arguments are erased in Python debug target",
+        );
     }
-
-    let params = &line[open + 1..close];
-    let mut erased = 0;
-    let kept = split_top_level_commas(params)
-        .into_iter()
-        .filter(|param| {
-            let is_type_param = Regex::new(r"^[A-Za-z_][A-Za-z0-9_]*\s*:\s*type(?:\s*=.*)?$")
-                .unwrap()
-                .is_match(param.trim());
-            if is_type_param {
-                erased += 1;
-            }
-            !is_type_param
-        })
-        .collect::<Vec<_>>();
-    if erased == 0 {
-        return line.to_string();
-    }
-    report.erased_generics += erased;
-    report.warn_semantic(
-        file,
-        line_no,
-        "generic-type-param-erased",
-        "Codon generic type parameters passed as `type` arguments are erased in Python debug target",
-    );
-    format!(
-        "{}({}){}",
-        &line[..open],
-        kept.join(", "),
-        &line[close + 1..]
-    )
+    out
 }
 
 fn lower_static_range(file: &str, line_no: usize, line: &str, report: &mut Report) -> String {
-    if contains_quote(line) {
-        return line.to_string();
-    }
-    let out = Regex::new(r"\bstatic\.range\s*\(")
-        .unwrap()
-        .replace_all(line, "range(")
-        .to_string();
-    if out != line {
+    let (out, count) = rewrite_static_range_tokens(line);
+    if count > 0 {
         report.warn_semantic(
             file,
             line_no,
@@ -481,95 +572,338 @@ fn lower_scalar_casts(
     assert_mode: AssertArg,
     report: &mut Report,
 ) -> String {
-    if contains_quote(line) {
-        return line.to_string();
-    }
-    let mut out = line.to_string();
-    for ty in ["i8", "u8", "i16", "u16", "i32", "u32", "i64", "u64"] {
-        let re = Regex::new(&format!(r"\b{}\s*\((?P<expr>[^()]*)\)", regex::escape(ty))).unwrap();
-        let before = out.clone();
-        let replacement = if guards_enabled(assert_mode) {
-            format!("__codonx_cast_int($expr, \"__codonx_{}\")", ty)
-        } else {
-            "int($expr)".to_string()
-        };
-        out = re.replace_all(&out, replacement).to_string();
-        if out != before {
-            report.lowered_casts += 1;
-        }
-    }
-    for prefix in ["Int", "UInt"] {
-        let re = Regex::new(&format!(
-            r"\b{}\[(?P<bits>\s*\d+\s*)\]\s*\((?P<expr>[^()]*)\)",
-            prefix
-        ))
-        .unwrap();
-        let before = out.clone();
-        let replacement = if guards_enabled(assert_mode) {
-            format!("__codonx_cast_int($expr, \"__codonx_{}[$bits]\")", prefix)
-        } else {
-            "int($expr)".to_string()
-        };
-        out = re.replace_all(&out, replacement).to_string();
-        if out != before {
-            report.lowered_casts += 1;
-        }
-    }
-    for ty in ["f32", "float32", "f64", "float16", "bfloat16", "float128"] {
-        let re = Regex::new(&format!(r"\b{}\s*\((?P<expr>[^()]*)\)", regex::escape(ty))).unwrap();
-        let before = out.clone();
-        out = re.replace_all(&out, "float($expr)").to_string();
-        if out != before {
-            report.lowered_casts += 1;
-            if ty != "f64" {
-                report.warn_semantic(
-                    file,
-                    line_no,
-                    "float32-precision",
-                    "Python debug target lowers f32/float32 casts to Python float and does not simulate 32-bit rounding",
-                );
-            }
-        }
+    let (out, stats) = rewrite_scalar_cast_tokens(line, guards_enabled(assert_mode));
+    report.lowered_casts += stats.int_casts + stats.float_casts;
+    if stats.lossy_float_casts > 0 {
+        report.warn_semantic(
+            file,
+            line_no,
+            "float32-precision",
+            "Python debug target lowers f32/float32 casts to Python float and does not simulate 32-bit rounding",
+        );
     }
     out
 }
 
-fn contains_quote(line: &str) -> bool {
-    line.contains('"') || line.contains('\'')
+#[derive(Default)]
+struct CastRewriteStats {
+    int_casts: usize,
+    float_casts: usize,
+    lossy_float_casts: usize,
 }
 
-fn is_simple_ann_decl(line: &str) -> bool {
-    Regex::new(r"^\s*[A-Za-z_][A-Za-z0-9_]*\s*:\s*[^=#]+$")
-        .unwrap()
-        .is_match(line)
+fn rewrite_static_range_tokens(line: &str) -> (String, usize) {
+    let mut out = String::with_capacity(line.len());
+    let mut pos = 0;
+    let mut count = 0;
+    for segment in code_segments(line) {
+        let mut cursor = segment.start;
+        while let Some(rel) = line[cursor..segment.end].find("static") {
+            let start = cursor + rel;
+            let end = start + "static".len();
+            if !is_token_boundary(line, start, end) {
+                cursor = end;
+                continue;
+            }
+            let mut dot = skip_ascii_ws(line, end);
+            if line.as_bytes().get(dot) != Some(&b'.') {
+                cursor = end;
+                continue;
+            }
+            dot += 1;
+            let range_start = skip_ascii_ws(line, dot);
+            let range_end = range_start + "range".len();
+            if line.get(range_start..range_end) != Some("range")
+                || !is_token_boundary(line, range_start, range_end)
+            {
+                cursor = end;
+                continue;
+            }
+            let open = skip_ascii_ws(line, range_end);
+            if line.as_bytes().get(open) != Some(&b'(') {
+                cursor = range_end;
+                continue;
+            }
+            out.push_str(&line[pos..start]);
+            out.push_str("range");
+            out.push_str(&line[open..open + 1]);
+            pos = open + 1;
+            cursor = open + 1;
+            count += 1;
+        }
+    }
+    out.push_str(&line[pos..]);
+    (out, count)
 }
 
-fn find_matching_paren(line: &str, open: usize) -> Option<usize> {
-    let mut depth = 0_i32;
-    for (idx, ch) in line.char_indices().skip_while(|(idx, _)| *idx < open) {
-        match ch {
-            '(' => depth += 1,
-            ')' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(idx);
+fn rewrite_scalar_cast_tokens(line: &str, guard_casts: bool) -> (String, CastRewriteStats) {
+    let mut out = String::with_capacity(line.len());
+    let mut pos = 0;
+    let mut stats = CastRewriteStats::default();
+
+    for segment in code_segments(line) {
+        let mut cursor = segment.start;
+        while cursor < segment.end {
+            let Some((cast, name_start, _name_end, open, close)) =
+                parse_cast_call(line, cursor, segment.end)
+            else {
+                break;
+            };
+            let expr = &line[open + 1..close];
+            out.push_str(&line[pos..name_start]);
+            match cast {
+                ScalarCast::Int(label) => {
+                    stats.int_casts += 1;
+                    if guard_casts {
+                        out.push_str(&format!(
+                            "__codonx_cast_int({}, \"__codonx_{}\")",
+                            expr, label
+                        ));
+                    } else {
+                        out.push_str(&format!("int({})", expr));
+                    }
+                }
+                ScalarCast::Float { lossy } => {
+                    stats.float_casts += 1;
+                    if lossy {
+                        stats.lossy_float_casts += 1;
+                    }
+                    out.push_str(&format!("float({})", expr));
                 }
             }
-            _ => {}
+            pos = close + 1;
+            cursor = close + 1;
         }
+    }
+
+    out.push_str(&line[pos..]);
+    (out, stats)
+}
+
+#[derive(Debug, Clone)]
+enum ScalarCast {
+    Int(String),
+    Float { lossy: bool },
+}
+
+fn parse_cast_call(
+    line: &str,
+    mut cursor: usize,
+    end: usize,
+) -> Option<(ScalarCast, usize, usize, usize, usize)> {
+    while cursor < end {
+        let ch = line[cursor..].chars().next()?;
+        if !is_ident_start(ch) {
+            cursor += ch.len_utf8();
+            continue;
+        }
+        let name_start = cursor;
+        let name_end = take_ident(line, name_start)?;
+        if !is_token_boundary(line, name_start, name_end) {
+            cursor = name_end;
+            continue;
+        }
+        let Some((cast, type_end)) = parse_scalar_cast_type(line, name_start, name_end) else {
+            cursor = name_end;
+            continue;
+        };
+        let open = skip_ascii_ws(line, type_end);
+        if open >= end || line.as_bytes().get(open) != Some(&b'(') {
+            cursor = type_end;
+            continue;
+        }
+        let Some(close) = find_matching_code_delim(line, open, '(', ')') else {
+            cursor = open + 1;
+            continue;
+        };
+        if close > end {
+            cursor = open + 1;
+            continue;
+        }
+        return Some((cast, name_start, type_end, open, close));
     }
     None
 }
 
-fn rewrite_from_python_import(line: &str) -> Option<String> {
-    let trimmed = line.trim_start();
-    let indent_len = line.len() - trimmed.len();
-    let rest = trimmed.strip_prefix("from python import ")?;
-    if rest.contains("->") || rest.contains('(') || rest.contains(')') {
-        return Some(format!(
-            "{}# codonx: unsupported typed Python interop; use #%ifpy/#%ifcodon to provide a Python import/wrapper",
-            &line[..indent_len]
+fn parse_scalar_cast_type(
+    line: &str,
+    name_start: usize,
+    name_end: usize,
+) -> Option<(ScalarCast, usize)> {
+    let name = &line[name_start..name_end];
+    if matches!(
+        name,
+        "i8" | "u8" | "i16" | "u16" | "i32" | "u32" | "i64" | "u64"
+    ) {
+        return Some((ScalarCast::Int(name.to_string()), name_end));
+    }
+    if matches!(
+        name,
+        "f32" | "float32" | "f64" | "float16" | "bfloat16" | "float128"
+    ) {
+        return Some((
+            ScalarCast::Float {
+                lossy: name != "f64",
+            },
+            name_end,
         ));
     }
-    Some(format!("{}import {}", &line[..indent_len], rest))
+    if !matches!(name, "Int" | "UInt") {
+        return None;
+    }
+    let bracket_open = skip_ascii_ws(line, name_end);
+    if line.as_bytes().get(bracket_open) != Some(&b'[') {
+        return None;
+    }
+    let bracket_close = find_matching_code_delim(line, bracket_open, '[', ']')?;
+    let bits = line[bracket_open + 1..bracket_close].trim();
+    if bits.is_empty() || !bits.chars().all(|ch| ch.is_ascii_digit()) {
+        return None;
+    }
+    Some((
+        ScalarCast::Int(format!("{}[{}]", name, bits)),
+        bracket_close + 1,
+    ))
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CodeSegment {
+    start: usize,
+    end: usize,
+}
+
+fn code_segments(line: &str) -> Vec<CodeSegment> {
+    let mut out = Vec::new();
+    let mut segment_start = 0;
+    let mut i = 0;
+    while i < line.len() {
+        let ch = line[i..].chars().next().unwrap();
+        if ch == '#' {
+            if segment_start < i {
+                out.push(CodeSegment {
+                    start: segment_start,
+                    end: i,
+                });
+            }
+            return out;
+        }
+        if ch == '\'' || ch == '"' {
+            if segment_start < i {
+                out.push(CodeSegment {
+                    start: segment_start,
+                    end: i,
+                });
+            }
+            i = skip_string_literal(line, i);
+            segment_start = i;
+            continue;
+        }
+        i += ch.len_utf8();
+    }
+    if segment_start < line.len() {
+        out.push(CodeSegment {
+            start: segment_start,
+            end: line.len(),
+        });
+    }
+    out
+}
+
+fn skip_string_literal(line: &str, start: usize) -> usize {
+    let quote = line.as_bytes()[start];
+    let triple = line.as_bytes().get(start + 1) == Some(&quote)
+        && line.as_bytes().get(start + 2) == Some(&quote);
+    let mut i = start + if triple { 3 } else { 1 };
+    while i < line.len() {
+        if !triple && line.as_bytes()[i] == b'\\' {
+            i = (i + 2).min(line.len());
+            continue;
+        }
+        if triple {
+            if line.as_bytes().get(i) == Some(&quote)
+                && line.as_bytes().get(i + 1) == Some(&quote)
+                && line.as_bytes().get(i + 2) == Some(&quote)
+            {
+                return i + 3;
+            }
+        } else if line.as_bytes()[i] == quote {
+            return i + 1;
+        }
+        i += 1;
+    }
+    line.len()
+}
+
+fn find_matching_code_delim(
+    line: &str,
+    open: usize,
+    open_ch: char,
+    close_ch: char,
+) -> Option<usize> {
+    let mut depth = 0_i32;
+    let mut i = open;
+    while i < line.len() {
+        let ch = line[i..].chars().next()?;
+        match ch {
+            '\'' | '"' => {
+                i = skip_string_literal(line, i);
+                continue;
+            }
+            '#' => return None,
+            c if c == open_ch => depth += 1,
+            c if c == close_ch => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+        i += ch.len_utf8();
+    }
+    None
+}
+
+fn skip_ascii_ws(line: &str, mut i: usize) -> usize {
+    while line.as_bytes().get(i).is_some_and(u8::is_ascii_whitespace) {
+        i += 1;
+    }
+    i
+}
+
+fn leading_indent(line: &str) -> usize {
+    line.chars()
+        .take_while(|ch| *ch == ' ' || *ch == '\t')
+        .map(|ch| if ch == '\t' { 4 } else { 1 })
+        .sum()
+}
+
+fn take_ident(s: &str, start: usize) -> Option<usize> {
+    let mut chars = s[start..].char_indices();
+    let (_, first) = chars.next()?;
+    if !is_ident_start(first) {
+        return None;
+    }
+    let mut end = start + first.len_utf8();
+    for (rel, ch) in chars {
+        if !is_ident_continue(ch) {
+            break;
+        }
+        end = start + rel + ch.len_utf8();
+    }
+    Some(end)
+}
+
+fn is_token_boundary(line: &str, start: usize, end: usize) -> bool {
+    let before = line[..start].chars().next_back();
+    let after = line[end..].chars().next();
+    !before.is_some_and(is_ident_continue) && !after.is_some_and(is_ident_continue)
+}
+
+fn is_ident_start(ch: char) -> bool {
+    ch == '_' || ch.is_ascii_alphabetic()
+}
+
+fn is_ident_continue(ch: char) -> bool {
+    ch == '_' || ch.is_ascii_alphanumeric()
 }

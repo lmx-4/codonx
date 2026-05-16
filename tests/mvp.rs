@@ -741,7 +741,8 @@ fn scalar_casts_are_lowered_with_range_checks() {
     b: u8 = UInt[8](255)
     c: f32 = float32(1)
     d: i32 = i32(a + b)
-    return d + int(c)
+    e: i32 = i32(max(a, b))
+    return d + e + int(c)
 
 print(ok())
 "#,
@@ -763,11 +764,12 @@ print(ok())
     let py_text = fs::read_to_string(&py).unwrap();
     assert!(py_text.contains("__codonx_cast_int(127, \"__codonx_i8\")"));
     assert!(py_text.contains("__codonx_cast_int(255, \"__codonx_UInt[8]\")"));
+    assert!(py_text.contains("__codonx_cast_int(max(a, b), \"__codonx_i32\")"));
     assert!(py_text.contains("float(1)"));
 
     let ok = Command::new("python3").arg(&py).output().unwrap();
     assert_success(&ok);
-    assert_eq!(String::from_utf8_lossy(&ok.stdout).trim(), "383");
+    assert_eq!(String::from_utf8_lossy(&ok.stdout).trim(), "638");
 
     let fail_src = write_file(dir.path(), "bad_cast.codon", "print(u8(-1))\n");
     let fail_py = dir.path().join("bad_cast.py");
@@ -783,7 +785,7 @@ print(ok())
     assert!(String::from_utf8_lossy(&fail.stderr).contains("codonx guard failed"));
 
     let report_text = fs::read_to_string(report).unwrap();
-    assert!(report_text.contains("\"lowered_casts\": 4"));
+    assert!(report_text.contains("\"lowered_casts\": 5"));
     assert!(report_text.contains("float32-precision"));
 }
 
@@ -983,6 +985,45 @@ print(lit(1))
 }
 
 #[test]
+fn multiline_headers_are_lowered_with_ast_spans() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = write_file(
+        dir.path(),
+        "multiline_headers.codonx",
+        r#"class Child[T: type](
+    Static[Base]
+):
+    pass
+
+def add(
+    x: i32,
+    y: List[UInt[16]],
+) -> i64:
+    return x
+
+print(add(1, [2]))
+"#,
+    );
+    let py = dir.path().join("multiline_headers.py");
+
+    let out = run(&[
+        "--dbg",
+        src.to_str().unwrap(),
+        "--assert",
+        "off",
+        "-o",
+        py.to_str().unwrap(),
+    ]);
+    assert_success(&out);
+
+    let py_text = fs::read_to_string(&py).unwrap();
+    assert!(py_text.contains("class Child[T](\n    Base\n):"));
+    assert!(py_text.contains("    x: int,"));
+    assert!(py_text.contains("    y: list[int],"));
+    assert!(py_text.contains(") -> int:"));
+}
+
+#[test]
 fn py312_target_edge_lowering_covers_overload_jit_static_float_and_ndarray() {
     let dir = tempfile::tempdir().unwrap();
     let src = write_file(
@@ -1051,8 +1092,12 @@ fn conservative_rewrites_do_not_touch_plain_strings_or_comments() {
         "conservative.codon",
         r#"# i32(1) static.range(3) List[i32]
 print("i32(1) static.range(3) List[i32]")
-value: i32 = i32(1)
-print(value)
+print("literal", i32(2), "static.range(4)")
+value: i32 = i32(1)  # i32(9) static.range(9)
+items: list[i32] = []
+for i in static.range(3):
+    items.append(i32(max(i, 1)))
+print(value, items)
 "#,
     );
     let py = dir.path().join("conservative.py");
@@ -1069,13 +1114,16 @@ print(value)
     let py_text = fs::read_to_string(&py).unwrap();
     assert!(py_text.contains("# i32(1) static.range(3) List[i32]"));
     assert!(py_text.contains("print(\"i32(1) static.range(3) List[i32]\")"));
+    assert!(py_text.contains("print(\"literal\", int(2), \"static.range(4)\")"));
     assert!(py_text.contains("value: int = int(1)"));
+    assert!(py_text.contains("for i in range(3):"));
+    assert!(py_text.contains("items.append(int(max(i, 1)))"));
 
     let ok = Command::new("python3").arg(py).output().unwrap();
     assert_success(&ok);
     assert_eq!(
         String::from_utf8_lossy(&ok.stdout).trim(),
-        "i32(1) static.range(3) List[i32]\n1"
+        "i32(1) static.range(3) List[i32]\nliteral 2 static.range(4)\n1 [1, 1, 2]"
     );
 }
 

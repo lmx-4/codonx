@@ -1,3 +1,4 @@
+mod ast;
 mod cli;
 mod directive;
 mod emit;

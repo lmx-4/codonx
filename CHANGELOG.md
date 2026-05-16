@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.1 - 2026-05-16
+
+Local AST/span rewrite foundation release.
+
+- Added a local AST/span rewrite module for function signatures, annotated assignments, class signatures, `from python import`, and Codon/Python type annotation lowering.
+- Moved multiline function/class header lowering onto AST/span parsing, including Python 3.12 generic syntax and `Static[...]` inheritance handling.
+- Replaced scalar cast and `static.range` lowering with token/span scanning that skips comments and strings while supporting nested call expressions.
+- Preserved Python debug guard insertion while sourcing function and assignment types from parsed AST nodes.
+- Added a 0.1.x roadmap documenting the migration away from regex-final rewrites and keeping Codon native AST integration out of scope for this series.
+- Expanded integration coverage for multiline headers, nested scalar casts, conservative string/comment handling, and `Static[object]` class lowering.
+
 ## 0.1.0 - 2026-05-12
 
 Regex-level MVP stabilization release.

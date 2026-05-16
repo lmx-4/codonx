@@ -6,13 +6,6 @@ pub struct ParamAnn {
     pub ty: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DefSig {
-    pub indent: usize,
-    pub params: Vec<ParamAnn>,
-    pub ret: Option<String>,
-}
-
 pub fn translate_annotations_in_line(line: &str) -> String {
     let mut out = line.to_string();
     for (from, to) in [
@@ -111,55 +104,4 @@ pub fn split_top_level_commas(s: &str) -> Vec<String> {
         out.push(last.to_string());
     }
     out
-}
-
-pub fn parse_def_signature(line: &str, indent: usize) -> Option<DefSig> {
-    let re = Regex::new(
-        r"^\s*def\s+[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]+\])?\s*\((?P<params>.*)\)\s*(?:->\s*(?P<ret>[^:]+))?:",
-    )
-    .ok()?;
-    let caps = re.captures(line)?;
-    let params_src = caps.name("params")?.as_str();
-    let mut params = Vec::new();
-
-    for p in split_top_level_commas(params_src) {
-        let p = p.trim();
-        if p.is_empty() || p == "self" || p == "cls" || p.starts_with('*') {
-            continue;
-        }
-        let Some((name_part, ty_part)) = p.split_once(':') else {
-            continue;
-        };
-        let name = name_part.trim().to_string();
-        let ty = ty_part
-            .split('=')
-            .next()
-            .unwrap_or(ty_part)
-            .trim()
-            .to_string();
-        if ty == "type" {
-            continue;
-        }
-        if !name.is_empty() && !ty.is_empty() {
-            params.push(ParamAnn { name, ty });
-        }
-    }
-
-    let ret = caps
-        .name("ret")
-        .map(|m| m.as_str().trim().to_string())
-        .filter(|s| !s.is_empty());
-    Some(DefSig {
-        indent,
-        params,
-        ret,
-    })
-}
-
-pub fn parse_ann_assign(line: &str) -> Option<(String, String)> {
-    let re = Regex::new(r"^\s*(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*:\s*(?P<ty>[^=#]+?)\s*=").ok()?;
-    let caps = re.captures(line)?;
-    let name = caps.name("name")?.as_str().to_string();
-    let ty = caps.name("ty")?.as_str().trim().to_string();
-    Some((name, ty))
 }
