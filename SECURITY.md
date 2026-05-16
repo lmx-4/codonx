@@ -1,6 +1,7 @@
 # Security Policy
 
-codonx is an experimental source preprocessor and CLI wrapper.
+codonx is an experimental Linux-only source preprocessor and CLI wrapper around
+Python 3.12+ debug output and the official Codon compiler.
 
 ## Supported Versions
 
@@ -33,6 +34,7 @@ Security-sensitive areas include:
 - temporary file handling;
 - generated file path handling;
 - report generation paths.
+- release artifact packaging and checksums.
 
 ## Non-Security Bugs
 

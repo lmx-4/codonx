@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# codonx 0.0.1 release binary builder.
+# codonx Linux release binary builder.
 # Linux-first. Builds the Rust MVP into a directly runnable binary.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

@@ -1,44 +1,41 @@
 # codonx Design Notes
 
-codonx is a Codon-first preprocessing tool.
+These notes describe the design that exists in `codonx` 0.1.3. They are not a
+promise of language completeness.
 
-It exists to support a practical workflow:
+`codonx` is a Linux-only, Codon-first preprocessing tool:
 
 ```text
-one .codonx source
-    -> Python debug target
-    -> Codon release target
+selected codonx source
+    -> Python 3.12+ debug projection
+    -> Codon release projection
+    -> real codon compiler for run/build
 ```
 
-It is not a general transpiler.
+The project is intentionally built around the official Codon compiler. Python is
+the debug projection; Codon is the release source of truth.
 
-## Design Philosophy
+## Core Philosophy
 
-### Codon-first
+### Codon First
 
-The source file is assumed to be written for Codon first.
+The input is assumed to be written for Codon first. It may contain Codon types,
+parallel annotations, Python interop declarations, and release-only optimized
+branches.
 
-Codon carries information that Python does not naturally express, such as:
-
-- fixed-width integer intent;
-- Codon interop declarations;
-- `@par` parallel loops;
-- GPU annotations;
-- release-only optimized branches.
-
-The Python target is a debug projection, not the source of truth.
+The Python target exists to make development faster. It should catch obvious
+mismatches early, but it should not pretend to simulate every Codon semantic.
 
 ### Explicit Differences
 
-Python/Codon differences should be explicit.
-
-The main mechanism is:
+When Python and Codon need different code, the difference should be visible in
+the source:
 
 ```python
 #%ifpy
-# Python debug behavior
+# Python debug implementation
 #%else
-# Codon release behavior
+# Codon release implementation
 #%endif
 ```
 
@@ -46,75 +43,117 @@ or:
 
 ```python
 #%ifcodon
-# Codon release behavior
+# Codon release implementation
 #%else
-# Python debug behavior
+# Python debug implementation
 #%endif
 ```
 
-The deprecated `#%ifdebug` alias is kept only for compatibility.
+Comment directives are used because Python parses the whole file before runtime
+branches can help. A runtime `if DEBUG:` cannot protect Python from Codon-only
+syntax that appears elsewhere in the file.
 
-### Whitelist, Not Magic
+### Conservative Automatic Lowering
 
-codonx only performs small, documented, whitelist-based lowering.
+Automatic lowering must be local, predictable, explainable, and testable.
 
-Examples:
+Good automatic lowering examples:
 
-- `from python import math as m` -> `import math as m`
-- `@par` -> a comment warning in Python output, with the loop kept serial
-- `i32` annotation -> `int` annotation in Python output
-- explicit runtime guard for `i32` range
+- `from python import math as m` to `import math as m`.
+- `@par` removal in Python debug output while preserving the loop body.
+- `i32` annotation to Python `int` plus an `i32` range guard.
+- `static.range(...)` to runtime `range(...)` with a warning.
 
-Normal Codon code should prefer standard `int` and `float`. Fixed-width aliases
-such as `i32` and `u64` are treated as explicit low-level intent, not as the
-default numeric model.
+Bad automatic lowering examples:
 
-Anything requiring real semantic analysis should be handled with explicit target branches.
+- simulating GPU kernel behavior in Python;
+- resolving Codon overloads;
+- rewriting arbitrary pointer or LLVM interop;
+- translating whole Python libraries to Codon.
 
-## Why Not `if DEBUG:`?
+If a transformation needs global semantic knowledge, the correct 0.1.x answer is
+usually an explicit `#%ifpy` / `#%ifcodon` branch.
 
-Python parses the whole file before executing it. If the file contains Codon-only syntax, Python can fail before runtime branching matters.
+## Runtime Model
 
-Therefore codonx uses comment directives:
-
-```python
-#%ifpy
-#%else
-#%endif
-```
-
-These are preprocessing directives, not runtime branches.
-
-## Python Target
+### Python Debug Target
 
 The Python target is for:
 
+- Python 3.12+ execution;
 - IDE debugging;
-- `pytest`;
 - `pdb`;
-- quick correctness checks;
-- runtime semantic guards.
+- `pytest`;
+- runtime semantic guards;
+- quick checks before compiling with Codon.
 
 The Python target is not for:
 
-- performance;
+- performance measurement;
+- proving equivalence with Codon;
 - simulating OpenMP races;
 - simulating GPU kernels;
-- proving equivalence with Codon.
+- simulating Codon Python interop conversion behavior.
 
-## Codon Target
+### Codon Release Target
 
-The Codon target should stay close to the release intent.
-
-codonx should avoid injecting debug-only logic into Codon output.
+The Codon target should stay close to the selected release branch. `codonx`
+should avoid injecting debug-only logic into Codon output.
 
 `codonx run` and `codonx build` are thin wrappers:
 
 ```text
-.codonx
-  -> temporary/preprocessed .codon
-  -> codon run/build
+input.codon
+    -> selected/preprocessed temporary .codon
+    -> codon run/build
 ```
+
+The official Codon compiler remains responsible for type checking, optimization,
+execution, and build output.
+
+## Implementation Shape in 0.1.3
+
+The 0.1.3 implementation is a local AST/span rewrite MVP.
+
+```text
+raw source
+    -> directive selection
+    -> source lines and stable spans
+    -> local AST/span or token-aware candidate handling
+    -> non-overlapping patch application
+    -> Python debug or Codon release output
+```
+
+Important properties:
+
+- Rewrites are conservative and whitelist-based.
+- Plain comments and quoted strings are protected from semantic rewrites.
+- Syntax-sensitive transformations use local AST/span or token-aware logic.
+- Regex is not the final authority for semantic rewrites.
+- Unknown or ambiguous syntax should be preserved or reported, not guessed.
+
+The local AST is not a full language AST. It is a rewrite IR for the constructs
+that `codonx` can safely lower today.
+
+## Numeric Semantics
+
+0.1.3 follows Codon's Python-like mainline numeric style:
+
+- `int` is the normal integer type for most user code.
+- `float` is the normal floating-point type for most user code.
+- `list[int]`, `dict[str, float]`, and similar annotations are the preferred
+  high-level shape.
+
+Fixed-width and low-level types remain meaningful:
+
+- `i8`, `i16`, `i32`, `i64`;
+- `u8`, `u16`, `u32`, `u64`;
+- `Int[N]`, `UInt[N]`;
+- `f32`, `f64`, `float32`.
+
+Those types represent explicit low-level intent. Python debug guards may enforce
+range or shape expectations, but Codon release behavior is still decided by
+Codon's type system.
 
 ## Semantic Guards
 
@@ -125,71 +164,87 @@ Examples:
 - `i32` out of range;
 - `u64` negative value;
 - `bool` accidentally accepted as `int`;
-- ASCII string expectation;
-- shallow or full container element checks.
+- non-ASCII `str` where ASCII `str` is expected;
+- shallow or full container element mismatches.
 
-Guards are mismatch detectors, not equivalence proofs.
+Guards are inserted for supported parameter types, annotated assignments, and
+return values. They are mismatch detectors, not formal equivalence proofs.
 
 They do not simulate:
 
 - floating-point rounding differences;
 - Codon overload resolution;
 - dict/set order behavior;
-- OpenMP races;
+- parallel races;
 - GPU execution;
 - Python interop conversion behavior.
 
 ## Directive Model
 
-Current directives:
+Supported target directives:
 
 ```text
 #%ifpy
 #%ifcodon
 #%else
 #%endif
+```
+
+Compatibility directive:
+
+```text
+#%ifdebug
+```
+
+`#%ifdebug` is an alias for `#%ifpy` and should not be used in new code.
+
+Supported define directives:
+
+```text
 #%define CODON_PYTHON <path>
 #%define CODON_DEBUG <path>
 ```
 
-`#%define` is intentionally not a macro system.
+`CODON_PYTHON` is passed to `codon run` and `codon build` for Python interop.
+`CODON_DEBUG` configures Codon debug dump handling. Unknown define names are
+errors because `#%define` is not a general macro system.
 
-Supported names:
+## Lowering Policy
 
-- `CODON_PYTHON`: injected into Codon subprocess environment.
-- `CODON_DEBUG`: debug dump directory for Codon runs/builds.
+A new automatic lowering belongs in `codonx` only if it meets all of these
+conditions:
 
-Unknown names are errors.
+- It is local.
+- It is deterministic.
+- It can be explained in the README.
+- It can be tested with small integration cases.
+- It can fail closed without changing user semantics.
 
-## What Belongs in Automatic Lowering?
+If a construct needs whole-program knowledge, overload resolution, pointer
+analysis, control-flow analysis, or compiler-internal Codon AST access, it does
+not belong in automatic 0.1.x lowering.
 
-A new automatic lowering belongs in codonx only if it is:
+## Platform Policy
 
-- local;
-- predictable;
-- explainable in README;
-- testable with small integration cases;
-- safe without full semantic analysis.
+0.1.3 supports Linux only. This keeps the subprocess model, release packaging,
+Codon compiler expectation, and Python 3.12+ debug path simple.
 
-If not, prefer explicit `#%ifpy` / `#%ifcodon`.
+Non-Linux behavior is not intentionally supported in this series.
 
 ## Long-Term Direction
 
-Near-term:
+Near-term work should focus on:
 
-- stronger tests;
-- cleaner CLI;
-- better examples;
-- better report output.
+- widening local AST coverage only where a concrete rewrite needs it;
+- strengthening diagnostics for unsupported but recognized syntax;
+- improving release/debug smoke tests;
+- keeping documentation aligned with actual behavior.
 
-Mid-term:
+Mid-term work may explore:
 
-- multi-file project mode;
-- source mapping comments;
-- stricter guard mode;
-- warning categories.
+- multi-file project workflows;
+- better source mapping;
+- stricter guard categories;
+- clearer warning taxonomies.
 
-Long-term:
-
-- possible Codon self-hosting experiment;
-- Rust version remains bootstrap/reference implementation.
+Codon native AST/log integration remains outside the 0.1.x implementation plan.

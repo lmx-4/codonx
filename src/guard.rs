@@ -1,15 +1,15 @@
-//! Python semantic guard generation for codonx 0.0.x.
+//! Python semantic guard generation for codonx 0.1.x.
 //!
 //! This module emits Python runtime assertions that make the Python debug target
 //! fail earlier when a value violates the intended Codon type semantics.
 //!
-//! Scope of 0.0.x:
+//! Scope of 0.1.x:
 //! - primitive scalar guards: int/i8/u8/.../i64/u64, float/f32/f64, bool, str
 //! - shallow/full guards for list[T], set[T], dict[K, V], tuple[T1, T2, ...]
 //! - helper prelude inserted into generated Python target
 //! - function-parameter/local-variable/return-value guard snippets
 //!
-//! Non-goals of 0.0.x:
+//! Non-goals of 0.1.x:
 //! - full Codon type parser
 //! - exact GPU/parallel simulation
 //! - pointer/LLVM/C-interop semantics
