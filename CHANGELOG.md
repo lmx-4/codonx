@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.2 - 2026-05-16
+
+Regex residual closure and assert robustness release.
+
+- Removed the legacy `regex` dependency and the final regex-based annotation fallback so semantic rewrites now route through local AST/span and token-aware mechanisms.
+- Renamed rewrite-boundary reporting away from regex terminology to reflect the local AST/span rewrite pipeline.
+- Added conservative Python debug lowering for Codon type tokens inside user `assert` statements while preserving Python 3.12 assert semantics.
+- Lowered parameterized runtime type checks such as `List[i32]` to bare Python runtime classes such as `list` to avoid `isinstance(..., list[int])` errors.
+- Kept assert lowering string/comment aware, preserving messages and comments while lowering only executable code segments.
+- Expanded unit and integration coverage for regex-free rewrite paths and assert conversion edge cases.
+
 ## 0.1.1 - 2026-05-16
 
 Local AST/span rewrite foundation release.

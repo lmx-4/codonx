@@ -48,6 +48,12 @@ pub struct ClassRewrite {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssertRewrite {
+    pub line: String,
+    pub lowered_type_tokens: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FromPythonImport {
     Module { replacement: String },
     Typed,
@@ -229,6 +235,37 @@ pub fn rewrite_ann_assign_for_python(line: &str) -> Option<String> {
             kind: PatchKind::Replace(lowered),
         }],
     )
+}
+
+pub fn rewrite_assert_statement_for_python(line: &str) -> Option<AssertRewrite> {
+    let assert_start = leading_indent_bytes(line);
+    let assert_end = assert_start + "assert".len();
+    if line.get(assert_start..assert_end) != Some("assert")
+        || !is_token_boundary(line, assert_start, assert_end)
+    {
+        return None;
+    }
+
+    let expr_start = skip_ws(line, assert_end);
+    if expr_start >= line.len() {
+        return Some(AssertRewrite {
+            line: line.to_string(),
+            lowered_type_tokens: 0,
+        });
+    }
+
+    let (rewritten, lowered_type_tokens) = lower_type_tokens_in_code(&line[expr_start..]);
+    if lowered_type_tokens == 0 {
+        return Some(AssertRewrite {
+            line: line.to_string(),
+            lowered_type_tokens,
+        });
+    }
+
+    Some(AssertRewrite {
+        line: format!("{}{}", &line[..expr_start], rewritten),
+        lowered_type_tokens,
+    })
 }
 
 pub fn parse_class_signature_line(line: &str) -> Option<ClassSig> {
@@ -486,6 +523,94 @@ fn lower_type_tokens(ty: &str) -> String {
     out
 }
 
+fn lower_type_tokens_in_code(code: &str) -> (String, usize) {
+    let mut out = String::with_capacity(code.len());
+    let mut i = 0;
+    let mut lowered = 0;
+    while i < code.len() {
+        let Some(ch) = code[i..].chars().next() else {
+            break;
+        };
+        if ch == '#' {
+            out.push_str(&code[i..]);
+            break;
+        }
+        if ch == '\'' || ch == '"' {
+            let end = skip_string_literal(code, i);
+            out.push_str(&code[i..end]);
+            i = end;
+            continue;
+        }
+        if is_ident_start(ch) {
+            let start = i;
+            i += ch.len_utf8();
+            while i < code.len() {
+                let Some(next) = code[i..].chars().next() else {
+                    break;
+                };
+                if !is_ident_continue(next) {
+                    break;
+                }
+                i += next.len_utf8();
+            }
+            let token = &code[start..i];
+            if matches!(token, "Int" | "UInt") {
+                let bracket_open = skip_ws(code, i);
+                if code.as_bytes().get(bracket_open) == Some(&b'[') {
+                    if let Some(bracket_close) =
+                        find_matching_code_delim(code, bracket_open, '[', ']')
+                    {
+                        let bits = code[bracket_open + 1..bracket_close].trim();
+                        if !bits.is_empty() && bits.chars().all(|ch| ch.is_ascii_digit()) {
+                            out.push_str("int");
+                            i = bracket_close + 1;
+                            lowered += 1;
+                            continue;
+                        }
+                    }
+                }
+            }
+            if matches!(token, "List" | "Dict" | "Set" | "Tuple") {
+                let bracket_open = skip_ws(code, i);
+                if code.as_bytes().get(bracket_open) == Some(&b'[') {
+                    if let Some(bracket_close) =
+                        find_matching_code_delim(code, bracket_open, '[', ']')
+                    {
+                        out.push_str(match token {
+                            "List" => "list",
+                            "Dict" => "dict",
+                            "Set" => "set",
+                            "Tuple" => "tuple",
+                            _ => unreachable!(),
+                        });
+                        i = bracket_close + 1;
+                        lowered += 1;
+                        continue;
+                    }
+                }
+            }
+            let replacement = match token {
+                "List" => "list",
+                "Dict" => "dict",
+                "Set" => "set",
+                "Tuple" => "tuple",
+                "byte" | "i8" | "u8" | "i16" | "u16" | "i32" | "u32" | "i64" | "u64" => "int",
+                "f32" | "float32" | "f64" | "float16" | "bfloat16" | "float128" => "float",
+                "NoneType" | "cobj" => "object",
+                _ => token,
+            };
+            if replacement != token {
+                lowered += 1;
+            }
+            out.push_str(replacement);
+            continue;
+        }
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    (out, lowered)
+}
+
 fn apply_patches(line: &str, patches: &[Patch]) -> Option<String> {
     let mut patches = patches.to_vec();
     patches.sort_by_key(|p| (p.span.start, p.span.end));
@@ -607,6 +732,31 @@ fn find_matching(s: &str, open: usize, open_ch: char, close_ch: char) -> Option<
     None
 }
 
+fn find_matching_code_delim(s: &str, open: usize, open_ch: char, close_ch: char) -> Option<usize> {
+    let mut depth = 0_i32;
+    let mut i = open;
+    while i < s.len() {
+        let ch = s[i..].chars().next()?;
+        match ch {
+            '\'' | '"' => {
+                i = skip_string_literal(s, i);
+                continue;
+            }
+            '#' => return None,
+            c if c == open_ch => depth += 1,
+            c if c == close_ch => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+        i += ch.len_utf8();
+    }
+    None
+}
+
 fn find_top_level_char(s: &str, start: usize, target: char) -> Option<usize> {
     let mut depth = 0_i32;
     for (idx, ch) in s.char_indices().skip_while(|(idx, _)| *idx < start) {
@@ -643,6 +793,31 @@ fn skip_ws(s: &str, mut i: usize) -> usize {
     i
 }
 
+fn skip_string_literal(s: &str, start: usize) -> usize {
+    let quote = s.as_bytes()[start];
+    let triple =
+        s.as_bytes().get(start + 1) == Some(&quote) && s.as_bytes().get(start + 2) == Some(&quote);
+    let mut i = start + if triple { 3 } else { 1 };
+    while i < s.len() {
+        if !triple && s.as_bytes()[i] == b'\\' {
+            i = (i + 2).min(s.len());
+            continue;
+        }
+        if triple {
+            if s.as_bytes().get(i) == Some(&quote)
+                && s.as_bytes().get(i + 1) == Some(&quote)
+                && s.as_bytes().get(i + 2) == Some(&quote)
+            {
+                return i + 3;
+            }
+        } else if s.as_bytes()[i] == quote {
+            return i + 1;
+        }
+        i += 1;
+    }
+    s.len()
+}
+
 fn trim_end_index(s: &str, start: usize, end: usize) -> usize {
     end - (s[start..end].len() - s[start..end].trim_end().len())
 }
@@ -672,6 +847,12 @@ fn is_ident_start(ch: char) -> bool {
 
 fn is_ident_continue(ch: char) -> bool {
     ch == '_' || ch.is_ascii_alphanumeric()
+}
+
+fn is_token_boundary(s: &str, start: usize, end: usize) -> bool {
+    let before = s[..start].chars().next_back();
+    let after = s[end..].chars().next();
+    before.is_none_or(|ch| !is_ident_continue(ch)) && after.is_none_or(|ch| !is_ident_continue(ch))
 }
 
 fn is_sized_int(ty: &str) -> bool {
@@ -716,7 +897,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_function_signature_without_regex() {
+    fn parses_function_signature_with_local_ast() {
         let sig =
             parse_def_signature_line("def f[T](x: list[i32], y: Dict[str, i64] = {}) -> i32:", 0)
                 .unwrap();
@@ -786,5 +967,24 @@ mod tests {
             Some(FromPythonImport::Typed),
             parse_from_python_import_line("from python import numpy.array(pyobj) -> pyobj")
         );
+    }
+
+    #[test]
+    fn rewrites_assert_type_tokens_without_touching_strings_or_comments() {
+        let rewritten = rewrite_assert_statement_for_python(
+            "    assert isinstance(x, Int[8]) and type(y) is List[i32], \"i32 stays\"  # Dict[i32, str]",
+        )
+        .unwrap();
+        assert_eq!(
+            "    assert isinstance(x, int) and type(y) is list, \"i32 stays\"  # Dict[i32, str]",
+            rewritten.line
+        );
+        assert_eq!(2, rewritten.lowered_type_tokens);
+    }
+
+    #[test]
+    fn assert_keyword_must_be_a_statement_token() {
+        assert!(rewrite_assert_statement_for_python("assertion = i32").is_none());
+        assert!(rewrite_assert_statement_for_python("x.assert i32").is_none());
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "codonx"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "Codon-first dual-target preprocessor: Python debug target and Codon release target."
@@ -13,7 +13,6 @@ exclude = ["Cargo.toml.orig"]
 [dependencies]
 anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }
-regex = "1.10"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "1.0"

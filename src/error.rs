@@ -11,7 +11,4 @@ pub enum CodonxError {
 
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
-
-    #[error("regex error: {0}")]
-    Regex(#[from] regex::Error),
 }

@@ -21,7 +21,7 @@ pub struct Report {
     pub lowered_casts: usize,
     pub erased_generics: usize,
     pub interop_warnings: usize,
-    pub unsupported_regex_boundaries: usize,
+    pub unsupported_rewrite_boundaries: usize,
 }
 
 impl Report {
@@ -82,14 +82,14 @@ impl Report {
         self.warn(file, line, kind, message);
     }
 
-    pub fn warn_unsupported_regex_boundary(
+    pub fn warn_unsupported_rewrite_boundary(
         &mut self,
         file: &str,
         line: usize,
         kind: &str,
         message: impl Into<String>,
     ) {
-        self.unsupported_regex_boundaries += 1;
+        self.unsupported_rewrite_boundaries += 1;
         self.warn(file, line, kind, message);
     }
 

@@ -6,7 +6,6 @@ use crate::guard::{
 };
 use crate::report::Report;
 use crate::source::SourceLine;
-use crate::type_parse::translate_annotations_in_line;
 
 #[derive(Debug, Clone)]
 struct FunctionCtx {
@@ -117,7 +116,7 @@ fn rewrite_py_lines(
         }
 
         if !line.in_triple_string && line.trimmed.trim() == "@llvm" {
-            report.warn_unsupported_regex_boundary(
+            report.warn_unsupported_rewrite_boundary(
                 file,
                 line.no,
                 "llvm-unsupported",
@@ -171,7 +170,7 @@ fn rewrite_py_lines(
             let ret = ret.as_deref().map(canonical_guard_type);
             out.push(
                 crate::ast::rewrite_def_signature_for_python(&rewritten)
-                    .unwrap_or_else(|| translate_annotations_in_line(&rewritten)),
+                    .unwrap_or_else(|| rewritten.clone()),
             );
             let params = normalize_param_pairs(params.into_iter().map(|p| (p.name, p.ty)));
             for (_, ty) in &params {
@@ -194,7 +193,7 @@ fn rewrite_py_lines(
         if let Some(ann) = crate::ast::parse_ann_assign_line(&line.raw) {
             out.push(
                 crate::ast::rewrite_ann_assign_for_python(&rewritten)
-                    .unwrap_or_else(|| translate_annotations_in_line(&rewritten)),
+                    .unwrap_or_else(|| rewritten.clone()),
             );
 
             let ty = canonical_guard_type(&ann.ty.text);
@@ -369,7 +368,7 @@ fn rewrite_py_line(
 
     if let Some((kind, message)) = decorator_warning(trimmed) {
         if kind == "llvm-unsupported" {
-            report.warn_unsupported_regex_boundary(file, line.no, kind, message);
+            report.warn_unsupported_rewrite_boundary(file, line.no, kind, message);
         } else if kind == "codon-jit-ignored" {
             report.warn_interop(file, line.no, kind, message);
         } else {
@@ -451,6 +450,7 @@ fn rewrite_py_line(
     out = erase_type_params_from_signature(file, line.no, &out, report);
     out = lower_static_range(file, line.no, &out, report);
     out = lower_scalar_casts(file, line.no, &out, assert_mode, report);
+    out = lower_assert_statement(file, line.no, &out, report);
     Some(out)
 }
 
@@ -583,6 +583,21 @@ fn lower_scalar_casts(
         );
     }
     out
+}
+
+fn lower_assert_statement(file: &str, line_no: usize, line: &str, report: &mut Report) -> String {
+    let Some(rewritten) = crate::ast::rewrite_assert_statement_for_python(line) else {
+        return line.to_string();
+    };
+    if rewritten.lowered_type_tokens > 0 {
+        report.warn_semantic(
+            file,
+            line_no,
+            "assert-type-lowered",
+            "Codon type tokens in assert statements are lowered for Python 3.12 debug execution",
+        );
+    }
+    rewritten.line
 }
 
 #[derive(Default)]

@@ -21,7 +21,7 @@ write a Codon-first .codon file
 The idea is not to pretend that Python and Codon are identical.  
 The idea is to make their differences **explicit, local, and testable**.
 
-Current status: **0.1.0 regex-level MVP / experimental**.
+Current status: **0.1.2 local AST/span rewrite MVP / experimental**.
 
 ---
 
@@ -52,7 +52,7 @@ syntax such as PEP 695 generic function and class type parameter lists.
 
 ## Stability contract for 0.1.x
 
-The 0.1.x line stabilizes codonx as a conservative regex/string-level MVP.
+The 0.1.x line stabilizes codonx as a conservative local AST/span rewrite MVP.
 
 Guaranteed:
 
@@ -60,19 +60,20 @@ Guaranteed:
 - Codon output keeps release-oriented Codon code as close to the selected source branch as possible.
 - `#%ifpy` / `#%ifcodon` are the supported way to express real semantic differences.
 - Existing lowering and guard behavior should stay backward-compatible unless it is fixing an unsafe rewrite.
+- Regex is no longer used for semantic rewrites; syntax-sensitive rewrites should flow through local AST/span or token-aware mechanisms.
 
 Conservative rewrite policy:
 
 - codonx should prefer a warning or no-op over a risky automatic rewrite.
-- Regex lowering is limited to local, line-oriented, documented patterns.
-- Future compatibility expansion should use a parser/AST layer or explicit directives instead of broadening regex rules.
+- Local AST/span lowering is limited to documented, conservative syntax patterns.
+- Future compatibility expansion should use a stronger parser/AST layer or explicit directives instead of broadening ad-hoc token rules.
 
 Explicitly unsupported:
 
 - full Codon-to-Python transpilation;
 - overload resolution or generic monomorphization;
 - LLVM, C pointer, GPU, parallel race, and Codon JIT semantic simulation;
-- reliable multi-line expression, multi-line signature, or nested-call rewriting.
+- reliable arbitrary multi-line expression rewriting.
 
 ---
 
@@ -81,15 +82,15 @@ Explicitly unsupported:
 Install the Linux x86_64 release binary:
 
 ```bash
-tar -xzf codonx-v0.1.0-x86_64-linux.tar.gz
-install -m 0755 codonx-v0.1.0-x86_64-linux/codonx ~/.local/bin/codonx
+tar -xzf codonx-v0.1.2-x86_64-linux.tar.gz
+install -m 0755 codonx-v0.1.2-x86_64-linux/codonx ~/.local/bin/codonx
 codonx --version
 ```
 
 Expected version:
 
 ```text
-codonx 0.1.0
+codonx 0.1.2
 ```
 
 Create `hello.codon`:
@@ -129,7 +130,7 @@ codonx --version
 ```
 
 ```text
-codonx 0.1.0
+codonx 0.1.2
 ```
 
 ---

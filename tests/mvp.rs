@@ -436,7 +436,7 @@ fn malformed_define_fails_fast() {
 }
 
 #[test]
-fn regex_lowering_leaves_comments_and_report_warnings() {
+fn ast_span_lowering_leaves_comments_and_report_warnings() {
     let dir = tempfile::tempdir().unwrap();
     let src = write_file(
         dir.path(),
@@ -906,7 +906,7 @@ uses_static(2, None, None)
     assert!(report_text.contains("pointer-interop-unsupported"));
     assert!(report_text.contains("static-range-lowered"));
     assert!(report_text.contains("\"interop_warnings\": 2"));
-    assert!(report_text.contains("\"unsupported_regex_boundaries\": 1"));
+    assert!(report_text.contains("\"unsupported_rewrite_boundaries\": 1"));
 }
 
 #[test]
@@ -1125,6 +1125,50 @@ print(value, items)
         String::from_utf8_lossy(&ok.stdout).trim(),
         "i32(1) static.range(3) List[i32]\nliteral 2 static.range(4)\n1 [1, 1, 2]"
     );
+}
+
+#[test]
+fn assert_statements_lower_codon_type_tokens_conservatively() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = write_file(
+        dir.path(),
+        "assert_lower.codon",
+        r#"def check(x: i32, y: list[i32]) -> i32:
+    assert isinstance(x, i32), "i32 should stay in this message"
+    assert isinstance(y, List[i32]) and isinstance((x, len(y)), Tuple[i32, i32])  # Dict[i32, str]
+    assert i32(max(x, 1)) == x
+    return x
+
+print(check(2, [1, 2]))
+"#,
+    );
+    let py = dir.path().join("assert_lower.py");
+    let report = dir.path().join("assert_lower.json");
+
+    let out = run(&[
+        "--dbg",
+        src.to_str().unwrap(),
+        "--assert",
+        "off",
+        "-o",
+        py.to_str().unwrap(),
+        "--report",
+        report.to_str().unwrap(),
+    ]);
+    assert_success(&out);
+    let py_text = fs::read_to_string(&py).unwrap();
+    assert!(py_text.contains("assert isinstance(x, int), \"i32 should stay in this message\""));
+    assert!(py_text.contains(
+        "assert isinstance(y, list) and isinstance((x, len(y)), tuple)  # Dict[i32, str]"
+    ));
+    assert!(py_text.contains("assert int(max(x, 1)) == x"));
+
+    let ok = Command::new("python3").arg(py).output().unwrap();
+    assert_success(&ok);
+    assert_eq!(String::from_utf8_lossy(&ok.stdout).trim(), "2");
+
+    let report_text = fs::read_to_string(report).unwrap();
+    assert!(report_text.contains("assert-type-lowered"));
 }
 
 #[test]
