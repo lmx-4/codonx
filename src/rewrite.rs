@@ -51,12 +51,41 @@ fn rewrite_py_lines(
     let mut out = Vec::new();
     let mut funcs: Vec<FunctionCtx> = Vec::new();
     let mut skip_lowlevel_block: Option<(usize, bool)> = None;
+    let mut skip_extend_block: Option<(usize, bool)> = None;
 
     if guards_enabled(assert_mode) {
         out.push(python_guard_prelude().trim_end().to_string());
     }
 
     for line in lines {
+        if let Some((indent, saw_class)) = skip_extend_block {
+            if line.trimmed.trim().is_empty() {
+                out.push(line.raw.clone());
+                continue;
+            }
+            if !saw_class
+                && line.indent == indent
+                && line.trimmed.trim_start().starts_with("class ")
+            {
+                out.push(format!(
+                    "{}# codonx: omitted Codon extension class: {}",
+                    " ".repeat(line.indent),
+                    line.trimmed.trim()
+                ));
+                skip_extend_block = Some((indent, true));
+                continue;
+            }
+            if saw_class && line.indent > indent {
+                out.push(format!(
+                    "{}# codonx: omitted Codon extension-only line: {}",
+                    " ".repeat(line.indent),
+                    line.trimmed.trim()
+                ));
+                continue;
+            }
+            skip_extend_block = None;
+        }
+
         if let Some((indent, saw_def)) = skip_lowlevel_block {
             if line.trimmed.trim().is_empty() {
                 out.push(line.raw.clone());
@@ -94,6 +123,21 @@ fn rewrite_py_lines(
                 " ".repeat(line.indent)
             ));
             skip_lowlevel_block = Some((line.indent, false));
+            continue;
+        }
+
+        if !line.in_triple_string && line.trimmed.trim() == "@extend" {
+            report.warn_semantic(
+                file,
+                line.no,
+                "extension-method-semantics",
+                "Codon extension class blocks are omitted in Python debug target to avoid shadowing Python types",
+            );
+            out.push(format!(
+                "{}# codonx: omitted @extend block; use #%ifpy/#%ifcodon for a Python fallback",
+                " ".repeat(line.indent)
+            ));
+            skip_extend_block = Some((line.indent, false));
             continue;
         }
 
@@ -314,10 +358,6 @@ fn decorator_warning(trimmed: &str) -> Option<(&'static str, &'static str)> {
         "@tuple" => Some((
             "tuple-class-semantics",
             "Codon tuple class layout is not simulated in Python debug target",
-        )),
-        "@extend" => Some((
-            "extension-method-semantics",
-            "Codon extension method semantics are not simulated in Python debug target",
         )),
         "@overload" => Some((
             "overload-ignored",

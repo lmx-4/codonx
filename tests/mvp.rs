@@ -885,7 +885,9 @@ uses_static(2, None, None)
     assert!(py_text.contains("unsupported C interop"));
     assert!(py_text.contains("removed @export"));
     assert!(py_text.contains("removed @tuple"));
-    assert!(py_text.contains("removed @extend"));
+    assert!(py_text.contains("omitted @extend block"));
+    assert!(py_text.contains("omitted Codon extension class: class int:"));
+    assert!(!py_text.contains("\nclass int:"));
     assert!(py_text.contains("omitted @llvm function"));
     assert!(py_text.contains("range(n)"));
     assert!(!py_text.contains("\n    %res"));

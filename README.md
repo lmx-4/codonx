@@ -78,6 +78,20 @@ Explicitly unsupported:
 
 ## Quick start
 
+Install the Linux x86_64 release binary:
+
+```bash
+tar -xzf codonx-v0.1.0-x86_64-linux.tar.gz
+install -m 0755 codonx-v0.1.0-x86_64-linux/codonx ~/.local/bin/codonx
+codonx --version
+```
+
+Expected version:
+
+```text
+codonx 0.1.0
+```
+
 Create `hello.codon`:
 
 ```python
@@ -241,6 +255,13 @@ With a warning report:
 codonx --dbg input.codon -o output.py --report report.json
 ```
 
+Recommended debug loop:
+
+```bash
+codonx --dbg input.codon --assert full -o input_dbg.py --report codonx-report.json
+python3.12 input_dbg.py
+```
+
 Important: there is **no `codonx py` subcommand in 0.1.0**.  
 The current release uses `--dbg`.
 
@@ -349,6 +370,7 @@ Python debug output uses a small whitelist of lowering rules.
 | `@export`, `@tuple`, `@extend` | removed with report warnings |
 | `@overload` | removed with report warning |
 | `@codon.jit`, `@codon.convert` | removed with interop warning |
+| `@extend` class blocks | omitted with warning to avoid shadowing Python types |
 | `@llvm` functions | omitted with warning; use explicit target branches |
 | `static.range(...)` | lowered to runtime `range(...)` with warning |
 | `class Child(Static[Base]):` | lowered to `class Child(Base):` with warning |
@@ -368,6 +390,17 @@ Anything beyond this should use explicit target branches.
 0.0.7 is intended as the final regex/string-level expansion release. Future
 larger compatibility work should use a parser/AST layer or explicit directives
 rather than adding increasingly broad regex rewrites.
+
+### Real boundaries in 0.1.0
+
+The Python target is intentionally conservative:
+
+- Rewrites are line-oriented. General multi-line signatures, nested calls, and multi-line expressions are not mechanically rewritten.
+- Plain comments and quoted strings are not rewritten.
+- Simple annotations are rewritten only in function signatures, simple annotated assignments, and simple annotation declarations.
+- Integer casts are checked only when `--assert` is enabled; with `--assert off`, simple integer casts lower to plain `int(...)`.
+- `@extend` blocks are omitted, not translated, because preserving them can shadow Python builtins such as `int` or `str`.
+- Codon release builds still use the real Codon type system. A Python debug run can pass while `codon build -release` fails on stricter Codon type constraints.
 
 ---
 

@@ -8,6 +8,8 @@ Regex-level MVP stabilization release.
 - Froze the regex/string-level lowering boundary except for conservative bug fixes.
 - Documented the stability contract: ambiguous Codon/Python semantic differences require explicit `#%ifpy` / `#%ifcodon` branches.
 - Kept the conservative rewrite policy: codonx should prefer warning or no-op behavior over risky automatic rewrites.
+- Omitted `@extend` class blocks in Python debug output to avoid shadowing Python builtins.
+- Documented Linux x86_64 binary usage and the real 0.1.0 rewrite/assert boundaries.
 
 ## 0.0.8 - 2026-05-12
 
