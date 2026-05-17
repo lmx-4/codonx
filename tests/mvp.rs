@@ -746,7 +746,7 @@ fn guard_type_reports_include_new_warning_categories() {
     assert!(report_text.contains("unchecked-dynamic-type"));
     assert!(report_text.contains("float32-precision"));
     assert!(report_text.contains("unordered-container"));
-    assert!(report_text.contains("unsupported-tuple-ellipsis"));
+    assert!(report_text.contains("tuple-ellipsis-runtime-check"));
 }
 
 #[test]
@@ -967,6 +967,56 @@ uses_static(2, None, None)
 }
 
 #[test]
+fn low_level_decorator_calls_omit_the_following_block() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = write_file(
+        dir.path(),
+        "decorator_calls.codon",
+        r#"@llvm("declare i64 @x(i64)")
+def low(a: int) -> int:
+    %res = add i64 %a, 1
+    ret i64 %res
+
+@extend()
+class str:
+    def shout(self):
+        return self
+
+print("ok")
+"#,
+    );
+    let py = dir.path().join("decorator_calls.py");
+    let report = dir.path().join("decorator_calls.json");
+
+    let out = run(&[
+        "--dbg",
+        src.to_str().unwrap(),
+        "--assert",
+        "off",
+        "-o",
+        py.to_str().unwrap(),
+        "--report",
+        report.to_str().unwrap(),
+    ]);
+    assert_success(&out);
+
+    let py_text = fs::read_to_string(&py).unwrap();
+    assert!(py_text.contains("omitted @llvm function"));
+    assert!(py_text.contains("omitted @extend block"));
+    assert!(py_text.contains("omitted low-level Codon-only line: %res"));
+    assert!(!py_text.contains("\n    %res"));
+    assert!(!py_text.contains("\nclass str:"));
+
+    let ok = Command::new("python3").arg(&py).output().unwrap();
+    assert_success(&ok);
+    assert_eq!(String::from_utf8_lossy(&ok.stdout).trim(), "ok");
+
+    let report_text = fs::read_to_string(report).unwrap();
+    assert!(report_text.contains("llvm-unsupported"));
+    assert!(report_text.contains("extension-method-semantics"));
+}
+
+#[test]
 fn optional_union_none_and_literal_guards_are_checked() {
     let dir = tempfile::tempdir().unwrap();
     let src = write_file(
@@ -1038,7 +1088,82 @@ print(lit(1))
     assert!(!bad_none.status.success());
 
     let report_text = fs::read_to_string(report).unwrap();
-    assert!(report_text.contains("literal-softened"));
+    assert!(report_text.contains("literal-runtime-check"));
+}
+
+#[test]
+fn literal_values_tuple_ellipsis_and_attribute_assignment_guards_are_checked() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = write_file(
+        dir.path(),
+        "stronger_guards.codon",
+        r#"class Box:
+    def __init__(self, value: i32):
+        self.value: i32 = value
+
+def pick(x: Literal[1, 2, "ok"]) -> Literal[1, 2, "ok"]:
+    return x
+
+def many(xs: tuple[i32, ...]) -> tuple[i32, ...]:
+    return xs
+
+print(Box(7).value)
+print(pick("ok"))
+print(many((1, 2, 3)))
+"#,
+    );
+    let py = dir.path().join("stronger_guards.py");
+    let report = dir.path().join("stronger_guards.json");
+
+    let out = run(&[
+        "--dbg",
+        src.to_str().unwrap(),
+        "--assert",
+        "full",
+        "-o",
+        py.to_str().unwrap(),
+        "--report",
+        report.to_str().unwrap(),
+    ]);
+    assert_success(&out);
+
+    let py_text = fs::read_to_string(&py).unwrap();
+    assert!(py_text.contains("self.value: int = value"));
+    assert!(py_text.contains("_codonx_assert_value(self.value, \"i32\""));
+    assert!(py_text.contains("def pick(x: object) -> object:"));
+    assert!(py_text.contains("\"Literal[1, 2, \\\"ok\\\"]\""));
+
+    let ok = Command::new("python3").arg(&py).output().unwrap();
+    assert_success(&ok);
+    assert_eq!(
+        String::from_utf8_lossy(&ok.stdout).trim(),
+        "7\nok\n(1, 2, 3)"
+    );
+
+    let bad_literal = Command::new("python3")
+        .arg("-c")
+        .arg(format!(
+            "ns={{}}; exec(open({:?}).read(), ns); ns['pick'](3)",
+            py.display().to_string()
+        ))
+        .output()
+        .unwrap();
+    assert!(!bad_literal.status.success());
+    assert!(String::from_utf8_lossy(&bad_literal.stderr).contains("codonx guard failed"));
+
+    let bad_tuple_item = Command::new("python3")
+        .arg("-c")
+        .arg(format!(
+            "ns={{}}; exec(open({:?}).read(), ns); ns['many']((1, 2**40))",
+            py.display().to_string()
+        ))
+        .output()
+        .unwrap();
+    assert!(!bad_tuple_item.status.success());
+    assert!(String::from_utf8_lossy(&bad_tuple_item.stderr).contains("codonx guard failed"));
+
+    let report_text = fs::read_to_string(report).unwrap();
+    assert!(report_text.contains("literal-runtime-check"));
 }
 
 #[test]
@@ -1275,6 +1400,41 @@ print(values, total)  # i32(99) static.range(9)
 
     let report_text = fs::read_to_string(report).unwrap();
     assert!(report_text.contains("static-range-lowered"));
+}
+
+#[test]
+fn multiline_return_values_are_guarded() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = write_file(
+        dir.path(),
+        "multiline_return.codon",
+        r#"def total(xs: list[i32]) -> i32:
+    return (
+        sum(xs)
+    )
+
+print(total([1, 2, 3]))
+"#,
+    );
+    let py = dir.path().join("multiline_return.py");
+
+    let out = run(&[
+        "--dbg",
+        src.to_str().unwrap(),
+        "--assert",
+        "full",
+        "-o",
+        py.to_str().unwrap(),
+    ]);
+    assert_success(&out);
+
+    let py_text = fs::read_to_string(&py).unwrap();
+    assert!(py_text.contains("_codonx_ret = ("));
+    assert!(py_text.contains("_codonx_assert_value(_codonx_ret, \"i32\""));
+
+    let ok = Command::new("python3").arg(&py).output().unwrap();
+    assert_success(&ok);
+    assert_eq!(String::from_utf8_lossy(&ok.stdout).trim(), "6");
 }
 
 #[test]

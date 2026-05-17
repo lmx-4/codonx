@@ -115,7 +115,7 @@ fn rewrite_py_lines(
             skip_lowlevel_block = None;
         }
 
-        if !line.in_triple_string && line.trimmed.trim() == "@llvm" {
+        if !line.in_triple_string && is_lowlevel_block_decorator(line.trimmed.trim()) {
             report.warn_unsupported_rewrite_boundary(
                 file,
                 line.no,
@@ -131,7 +131,7 @@ fn rewrite_py_lines(
             continue;
         }
 
-        if !line.in_triple_string && line.trimmed.trim() == "@extend" {
+        if !line.in_triple_string && is_extend_decorator(line.trimmed.trim()) {
             report.warn_semantic(
                 file,
                 line.no,
@@ -160,9 +160,15 @@ fn rewrite_py_lines(
             continue;
         }
 
-        if let Some(consumed) =
-            rewrite_multiline_expression(file, lines, idx, assert_mode, report, &mut out)
-        {
+        if let Some(consumed) = rewrite_multiline_expression(
+            file,
+            lines,
+            idx,
+            assert_mode,
+            report,
+            &mut out,
+            funcs.last(),
+        ) {
             idx += consumed;
             continue;
         }
@@ -301,6 +307,7 @@ fn rewrite_multiline_expression(
     assert_mode: AssertArg,
     report: &mut Report,
     out: &mut Vec<String>,
+    func: Option<&FunctionCtx>,
 ) -> Option<usize> {
     let first = &lines[start];
     if first.in_triple_string || first.trimmed.trim_start().starts_with('#') {
@@ -342,6 +349,16 @@ fn rewrite_multiline_expression(
             out.extend(guards);
         }
         return Some(end - start + 1);
+    }
+
+    if rewritten.trim_start().starts_with("return") {
+        if let Some(ctx) = func {
+            let guarded =
+                guard_return_lines(&rewritten, ctx.ret.as_deref(), assert_mode, first.indent);
+            report.inserted_guards += guarded.len().saturating_sub(1);
+            out.extend(guarded);
+            return Some(end - start + 1);
+        }
     }
 
     out.extend(rewritten.lines().map(str::to_string));
@@ -560,6 +577,21 @@ fn rewrite_py_line(
     out = lower_scalar_casts(file, line.no, &out, assert_mode, report);
     out = lower_assert_statement(file, line.no, &out, report);
     Some(out)
+}
+
+fn is_decorator_call(trimmed: &str, name: &str) -> bool {
+    trimmed == name
+        || trimmed
+            .strip_prefix(name)
+            .is_some_and(|rest| rest.trim_start().starts_with('('))
+}
+
+fn is_lowlevel_block_decorator(trimmed: &str) -> bool {
+    is_decorator_call(trimmed, "@llvm")
+}
+
+fn is_extend_decorator(trimmed: &str) -> bool {
+    is_decorator_call(trimmed, "@extend")
 }
 
 fn decorator_warning(trimmed: &str) -> Option<(&'static str, &'static str)> {

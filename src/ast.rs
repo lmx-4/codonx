@@ -188,14 +188,14 @@ pub fn rewrite_def_signature_for_python(line: &str) -> Option<String> {
 
 pub fn parse_ann_assign_line(line: &str) -> Option<AnnAssign> {
     let start = leading_indent_bytes(line);
-    let name_end = take_ident(line, start)?;
-    let name = line[start..name_end].to_string();
-    let after_name = skip_ws(line, name_end);
-    if line.as_bytes().get(after_name) != Some(&b':') {
+    let colon = find_top_level_char(line, start, ':')?;
+    let name_end = trim_end_index(line, start, colon);
+    let name = line[start..name_end].trim().to_string();
+    if name.is_empty() || !is_guardable_assignment_target(&name) {
         return None;
     }
 
-    let ty_start = skip_ws(line, after_name + 1);
+    let ty_start = skip_ws(line, colon + 1);
     let eq = find_top_level_char(line, ty_start, '=');
     let comment = find_top_level_char(line, ty_start, '#');
     let value_or_comment = match (eq, comment) {
@@ -220,6 +220,35 @@ pub fn parse_ann_assign_line(line: &str) -> Option<AnnAssign> {
         },
         has_value: eq.is_some(),
     })
+}
+
+fn is_guardable_assignment_target(target: &str) -> bool {
+    if target.starts_with('*') || target.contains('=') {
+        return false;
+    }
+    let mut depth = 0_i32;
+    let mut i = 0;
+    while i < target.len() {
+        let ch = target[i..].chars().next().unwrap();
+        match ch {
+            '\'' | '"' => {
+                i = skip_string_literal(target, i);
+                continue;
+            }
+            '[' | '(' => depth += 1,
+            ']' | ')' => {
+                depth -= 1;
+                if depth < 0 {
+                    return false;
+                }
+            }
+            ',' if depth == 0 => return false,
+            ':' | '#' if depth == 0 => return false,
+            _ => {}
+        }
+        i += ch.len_utf8();
+    }
+    depth == 0 && target.chars().next().is_some_and(is_ident_start)
 }
 
 pub fn rewrite_ann_assign_for_python(line: &str) -> Option<String> {
@@ -473,6 +502,9 @@ pub fn lower_type_annotation(ty: &str) -> String {
     }
     if looks_like_literal_builtin(trimmed, "bool") {
         return "bool".to_string();
+    }
+    if let Some(literal_ty) = lower_literal_annotation(trimmed) {
+        return literal_ty;
     }
 
     lower_type_tokens(ty)
@@ -890,6 +922,38 @@ fn looks_like_literal_builtin(ty: &str, name: &str) -> bool {
         return false;
     };
     inner.trim() == name
+}
+
+fn lower_literal_annotation(ty: &str) -> Option<String> {
+    let inner = ty
+        .strip_prefix("Literal[")
+        .and_then(|rest| rest.strip_suffix(']'))?;
+    let parts = split_top_level_commas(inner);
+    let mut lowered: Option<&'static str> = None;
+    for part in parts {
+        let part = part.trim();
+        let item_ty = if part == "True" || part == "False" {
+            "bool"
+        } else if part == "None" || part == "NoneType" {
+            "object"
+        } else if part.parse::<i64>().is_ok() {
+            "int"
+        } else if (part.starts_with('"') && part.ends_with('"'))
+            || (part.starts_with('\'') && part.ends_with('\''))
+        {
+            "str"
+        } else {
+            return Some("object".to_string());
+        };
+        if let Some(existing) = lowered {
+            if existing != item_ty {
+                return Some("object".to_string());
+            }
+        } else {
+            lowered = Some(item_ty);
+        }
+    }
+    lowered.map(str::to_string)
 }
 
 #[cfg(test)]

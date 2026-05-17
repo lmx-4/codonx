@@ -141,6 +141,29 @@ def _codonx_assert_value(value, ty, name="<value>", full=False):
             return value
         _codonx_type_error(name, ty, value)
 
+    inner = _codonx_inner_type(ty, "Literal")
+    if inner is not None:
+        parts = _codonx_split_top_level_commas(inner)
+        allowed = []
+        for part in parts:
+            part = part.strip()
+            if part == "True":
+                allowed.append(True)
+            elif part == "False":
+                allowed.append(False)
+            elif part in ("None", "NoneType"):
+                allowed.append(None)
+            elif (part.startswith("'") and part.endswith("'")) or (part.startswith('"') and part.endswith('"')):
+                allowed.append(part[1:-1])
+            else:
+                try:
+                    allowed.append(int(part, 0))
+                except ValueError:
+                    return value
+        if not any(type(value) is type(item) and value == item for item in allowed):
+            _codonx_type_error(name, ty, value)
+        return value
+
     int_bounds = _codonx_int_bounds(ty)
     if int_bounds is not None:
         lo, hi = int_bounds
@@ -214,6 +237,11 @@ def _codonx_assert_value(value, ty, name="<value>", full=False):
         if type(value) is not tuple:
             _codonx_type_error(name, ty, value)
         parts = _codonx_split_top_level_commas(inner)
+        if len(parts) == 2 and parts[1] == "...":
+            if full:
+                for i, item in enumerate(value):
+                    _codonx_assert_value(item, parts[0], f"{name}[{i}]", full)
+            return value
         if parts and parts[-1] != "..." and len(value) != len(parts):
             raise AssertionError(
                 f"codonx guard failed: {name} expected {ty}, got tuple length {len(value)}"
@@ -386,9 +414,12 @@ fn record_guard_type_warnings_inner(file: &str, line: usize, ty: &str, report: &
                 report.warn_semantic(
                     file,
                     line,
-                    "unsupported-tuple-ellipsis",
-                    "tuple[T, ...] is soft-checked for tuple shape only in Python debug target",
+                    "tuple-ellipsis-runtime-check",
+                    "tuple[T, ...] is shape-checked in shallow mode and element-checked in full mode",
                 );
+                for item in items.into_iter().take(1) {
+                    record_guard_type_warnings_inner(file, line, &item, report);
+                }
             } else {
                 for item in items {
                     record_guard_type_warnings_inner(file, line, &item, report);
@@ -401,14 +432,16 @@ fn record_guard_type_warnings_inner(file: &str, line: usize, ty: &str, report: &
                 record_guard_type_warnings_inner(file, line, &item, report);
             }
         }
-        GuardType::Literal(inner) => {
+        GuardType::Literal(items) => {
             report.warn_semantic(
                 file,
                 line,
-                "literal-softened",
-                "Codon Literal[...] is checked as its underlying Python debug type",
+                "literal-runtime-check",
+                "Codon Literal[...] is checked against simple literal values in Python debug target",
             );
-            record_guard_type_warnings_inner(file, line, &inner, report);
+            for item in items {
+                record_literal_item_warning(file, line, &item, report);
+            }
         }
         GuardType::Unchecked => report.warn_unchecked_dynamic_type(file, line, ty),
         GuardType::Unknown => report.warn_unknown_guard_type(file, line, ty),
@@ -426,7 +459,7 @@ enum GuardType {
     Tuple(Vec<String>),
     Optional(String),
     Union(Vec<String>),
-    Literal(String),
+    Literal(Vec<String>),
     Unchecked,
     Unknown,
 }
@@ -488,9 +521,27 @@ fn classify_guard_type(ty: &str) -> GuardType {
         return GuardType::Union(split_top_level_commas(inner));
     }
     if let Some(inner) = inner_type(&ty, "Literal") {
-        return GuardType::Literal(inner.to_string());
+        return GuardType::Literal(split_top_level_commas(inner));
     }
     GuardType::Unknown
+}
+
+fn record_literal_item_warning(file: &str, line: usize, item: &str, report: &mut Report) {
+    let item = item.trim();
+    if item.is_empty()
+        || matches!(item, "True" | "False" | "None" | "NoneType")
+        || item.parse::<i64>().is_ok()
+        || ((item.starts_with('"') && item.ends_with('"'))
+            || (item.starts_with('\'') && item.ends_with('\'')))
+    {
+        return;
+    }
+    report.warn_semantic(
+        file,
+        line,
+        "literal-softened",
+        "unsupported Literal[...] item is left as a soft Python debug check",
+    );
 }
 
 fn canonicalize_type(ty: &str) -> String {
