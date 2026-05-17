@@ -1,6 +1,6 @@
 # codonx Design Notes
 
-These notes describe the design that exists in `codonx` 0.1.3. They are not a
+These notes describe the design that exists in `codonx` 0.1.4. They are not a
 promise of language completeness.
 
 `codonx` is a Linux-only, Codon-first preprocessing tool:
@@ -111,9 +111,9 @@ input.codon
 The official Codon compiler remains responsible for type checking, optimization,
 execution, and build output.
 
-## Implementation Shape in 0.1.3
+## Implementation Shape in 0.1.4
 
-The 0.1.3 implementation is a local AST/span rewrite MVP.
+The 0.1.4 implementation is a local AST/span rewrite MVP.
 
 ```text
 raw source
@@ -137,7 +137,7 @@ that `codonx` can safely lower today.
 
 ## Numeric Semantics
 
-0.1.3 follows Codon's Python-like mainline numeric style:
+0.1.4 follows Codon's Python-like mainline numeric style:
 
 - `int` is the normal integer type for most user code.
 - `float` is the normal floating-point type for most user code.
@@ -226,7 +226,7 @@ not belong in automatic 0.1.x lowering.
 
 ## Platform Policy
 
-0.1.3 supports Linux only. This keeps the subprocess model, release packaging,
+0.1.4 supports Linux only. This keeps the subprocess model, release packaging,
 Codon compiler expectation, and Python 3.12+ debug path simple.
 
 Non-Linux behavior is not intentionally supported in this series.

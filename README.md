@@ -20,11 +20,11 @@ debug, and a Codon file that is fast enough to ship. Those files drift. `codonx`
 tries to keep one source of truth by making the Python/Codon split explicit,
 local, and testable.
 
-Current status: **0.1.3 local AST/span rewrite MVP / experimental**.
+Current status: **0.1.4 local AST/span rewrite MVP / experimental**.
 
 ## Hard Requirements
 
-`codonx` 0.1.3 is intentionally narrow.
+`codonx` 0.1.4 is intentionally narrow.
 
 - **Operating system:** Linux only.
 - **Python:** Python 3.12 or newer must be installed for debug output.
@@ -67,15 +67,15 @@ who already intend to run the release path under Codon.
 Install the Linux x86_64 release binary:
 
 ```bash
-tar -xzf codonx-v0.1.3-x86_64-linux.tar.gz
-install -m 0755 codonx-v0.1.3-x86_64-linux/codonx ~/.local/bin/codonx
+tar -xzf codonx-v0.1.4-x86_64-linux.tar.gz
+install -m 0755 codonx-v0.1.4-x86_64-linux/codonx ~/.local/bin/codonx
 codonx --version
 ```
 
 Expected output:
 
 ```text
-codonx 0.1.3
+codonx 0.1.4
 ```
 
 Check the external toolchain:
@@ -181,9 +181,9 @@ for i in range(n):
 `#%ifdebug` is still accepted as a deprecated alias for `#%ifpy`, but new code
 should use `#%ifpy`.
 
-## Numeric Semantics in 0.1.3
+## Numeric Semantics in 0.1.4
 
-Codon's normal numeric style is intentionally close to Python. In 0.1.3, the
+Codon's normal numeric style is intentionally close to Python. In 0.1.4, the
 recommended mainline types are:
 
 ```python
@@ -258,7 +258,7 @@ codonx --dbg input.codon --assert full -o input_dbg.py --report codonx-report.js
 python3.12 input_dbg.py
 ```
 
-There is no `codonx py` subcommand in 0.1.3. Python debug generation uses the
+There is no `codonx py` subcommand in 0.1.4. Python debug generation uses the
 top-level `--dbg` option.
 
 ## Codon Mode
@@ -306,7 +306,7 @@ These directives are removed from generated Python and Codon output.
 ## What codonx Lowers Today
 
 Python debug output uses local AST/span parsing plus conservative token-aware
-lowering. Regex is not the final authority for semantic rewrites in 0.1.3.
+lowering. Regex is not the final authority for semantic rewrites in 0.1.4.
 
 | Codon-dialect input | Python debug behavior |
 |---|---|
@@ -356,7 +356,8 @@ Currently guarded:
 
 With `--report`, guard analysis also warns about unknown guard types, unchecked
 dynamic types such as `pyobj`/`Any`/`object`, `f32` precision differences,
-dict/set ordering risk, and `tuple[T, ...]` soft-check limitations.
+dict/set ordering risk, runtime `Literal[...]` checks, and `tuple[T, ...]`
+mode differences.
 
 Guards are mismatch detectors, not equivalence proofs. They do not simulate
 parallel races, GPU execution, Codon overload resolution, floating-point

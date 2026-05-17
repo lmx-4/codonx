@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.4 - 2026-05-17
+
+Local AST guard consolidation and practical smoke release.
+
+- Extended annotated-assignment parsing so Python debug guards can cover supported attribute and indexed assignment targets, not just bare local names.
+- Added runtime guard support for `Literal[...]` values and improved `tuple[T, ...]` behavior: shallow mode remains shape-only, full mode checks elements.
+- Lowered supported `Literal[...]` annotations for Python debug output while keeping unsupported literal combinations conservative.
+- Hardened Codon-only decorated block handling for call-form decorators such as `@llvm(...)` and `@extend(...)`.
+- Guarded supported multiline `return (...)` expressions in Python debug output.
+- Added practical 300+ line Python/Codon smoke coverage proving generated Python output, preprocessed Codon output, and Codon binary output agree for the supported subset.
+
 ## 0.1.3 - 2026-05-16
 
 Codon-standard numeric semantics and release-target smoke coverage.

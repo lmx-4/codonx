@@ -1,6 +1,6 @@
 # Release Checklist
 
-This checklist is for 0.x releases. The current public baseline is `0.1.3`.
+This checklist is for 0.x releases. The current public baseline is `0.1.4`.
 
 ## Release Contract
 

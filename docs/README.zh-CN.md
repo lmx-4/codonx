@@ -14,11 +14,11 @@
                 交给真实 codon 编译器执行
 ```
 
-当前版本：**0.1.3 local AST/span rewrite MVP / experimental**。
+当前版本：**0.1.4 local AST/span rewrite MVP / experimental**。
 
 ## 硬性环境要求
 
-0.1.3 不追求“到处能跑”，它只支持一条明确路线。
+0.1.4 不追求“到处能跑”，它只支持一条明确路线。
 
 - **系统：** 仅支持 Linux。
 - **Python：** 必须有 Python 3.12 或更新版本，用于运行 debug 输出。
@@ -99,9 +99,9 @@ Python debug 输出保留串行循环；Codon release 输出保留 `@par` 并行
 
 `#%ifdebug` 仍作为旧别名兼容，但新代码应该使用 `#%ifpy`。
 
-## 0.1.3 的类型语义
+## 0.1.4 的类型语义
 
-0.1.3 的重要变化是回到 Codon 的常规数值风格：主线代码优先写 `int` 和 `float`。
+0.1.4 延续 Codon 的常规数值风格：主线代码优先写 `int` 和 `float`。
 
 ```python
 def mean(xs: list[int]) -> float:
@@ -122,7 +122,7 @@ Python debug guard 会尽量检查这些范围，但 release 语义仍由 Codon 
 
 ## Python Debug Target
 
-0.1.3 使用顶层 `--dbg` 生成 Python 文件，没有 `codonx py` 子命令。
+0.1.4 使用顶层 `--dbg` 生成 Python 文件，没有 `codonx py` 子命令。
 
 ```bash
 codonx --dbg input.codon -o input_dbg.py
@@ -168,7 +168,7 @@ codonx --keep-pre run -release input.codon
 
 ## 当前实现边界
 
-0.1.3 已经不是纯正则替换。语义改写收口到局部 AST/span 和 token-aware 机制；正则不再作为机械语义改写的最终依据。
+0.1.4 已经不是纯正则替换。语义改写收口到局部 AST/span 和 token-aware 机制；正则不再作为机械语义改写的最终依据。
 
 当前适合：
 

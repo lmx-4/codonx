@@ -1,6 +1,6 @@
 # codonx 0.1.x Evolution Roadmap
 
-This roadmap describes the 0.1.x line after the 0.1.3 release.
+This roadmap describes the 0.1.x line after the 0.1.4 release.
 
 The purpose of 0.1.x is to move `codonx` from the old 0.0.x string/regex MVP to
 a conservative local AST/span rewrite engine. The design target is not a full
@@ -10,9 +10,9 @@ the selected source branch.
 
 Codon compiler log AST integration is intentionally out of scope for 0.1.x.
 
-## Current 0.1.3 State
+## Current 0.1.4 State
 
-0.1.3 has established the current public contract:
+0.1.4 has established the current public contract:
 
 - Linux-only support.
 - Python debug output requires Python 3.12 or newer.
@@ -25,6 +25,8 @@ Codon compiler log AST integration is intentionally out of scope for 0.1.x.
 - Regex is no longer the final authority for mechanical semantic rewrites.
 - Runtime guards cover supported parameters, annotated assignments, return
   values, scalar casts, and container shapes.
+- `Literal[...]`, `tuple[T, ...]`, supported attribute/index annotated
+  assignments, and multiline returns have stronger Python debug guard coverage.
 - Multiline support exists for conservative expression-block cases, but
   arbitrary multiline rewriting remains out of scope.
 
@@ -192,17 +194,19 @@ False negatives are controlled by sentinel diagnostics:
 - Added optional local Codon compile/run smoke coverage when a Codon compiler is
   available.
 
+### 0.1.4: Local AST Guard Consolidation
+
+- Extended local AST assignment target support for guarded annotated
+  assignments.
+- Added stronger `Literal[...]`, `tuple[T, ...]`, and multiline return guard
+  behavior.
+- Hardened call-form `@llvm(...)` and `@extend(...)` block omission.
+- Validated the supported subset with a 300+ line practical Python/Codon smoke
+  fixture.
+
 ## Next Milestones
 
-### 0.1.4: Block-Aware Diagnostics
-
-- Strengthen indentation/block indexing for functions, classes, loops, and
-  decorated regions.
-- Attach decorators to their following function/class blocks consistently.
-- Emit clearer diagnostics for unsupported but recognized syntax.
-- Keep existing output behavior as the compatibility baseline.
-
-### 0.1.5: Guard Source Unification
+### 0.1.5: Block-Aware Diagnostics and Guard Source Unification
 
 - Move remaining guard insertion decisions onto AST/span-derived nodes.
 - Unify parameter, return, annotated-assignment, and scalar-cast type sources.
