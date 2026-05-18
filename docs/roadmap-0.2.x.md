@@ -71,12 +71,17 @@ Binding policy:
 
 Initial macro categories:
 
-- target selection hints;
-- parallelization hints;
-- generic/specialization hints;
-- guard/assert hints;
-- fallback hints;
+- `#%codon`: bind to the next import and require Codon native import semantics;
+- `#%parallel`: bind to a loop or function and request Codon parallel planning;
+- `#%type`: add type intent that annotations cannot express clearly;
+- `#%fallback`: make a CPython fallback boundary explicit;
 - unsupported or unknown macro diagnostics.
+
+0.2.x intentionally does not start with broad low-level macro categories such as
+`#%ffi`, `#%unsafe`, or a separate `#%generic`. Codon already exposes its own
+compiler flags, decorators, C interop, and Python interop. CodonX macros should
+first model Python-to-Codon translation intent, not invent another low-level
+optimization interface.
 
 ## CodonX IR Requirements
 
@@ -105,6 +110,7 @@ Required node-level fields:
 - optional name;
 - annotations where available;
 - attached macros;
+- import policy for import nodes;
 - conversion status;
 - diagnostic IDs.
 

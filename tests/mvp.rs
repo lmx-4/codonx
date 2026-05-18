@@ -147,6 +147,88 @@ assert work(2) == 3
 }
 
 #[test]
+fn codon_macro_marks_import_as_native_and_defaults_other_imports_to_python_fallback() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = write_file(
+        dir.path(),
+        "imports.py",
+        r#"#%codon
+import math
+import numpy as np
+
+#%codon
+def bad_target() -> int:
+    return 1
+"#,
+    );
+    let ir = dir.path().join("imports_ir.json");
+
+    let out = run(&["ir", src.to_str().unwrap(), "-o", ir.to_str().unwrap()]);
+    assert_success(&out);
+    let value: serde_json::Value = serde_json::from_str(&fs::read_to_string(ir).unwrap()).unwrap();
+    let nodes = value["nodes"].as_array().unwrap();
+
+    let math_import = nodes
+        .iter()
+        .find(|node| node["kind"] == "import" && node["imports"][0] == "math")
+        .unwrap();
+    assert_eq!(math_import["import_policy"], "codon_native_required");
+    assert_eq!(math_import["conversion"], "guarded");
+
+    let numpy_import = nodes
+        .iter()
+        .find(|node| node["kind"] == "import" && node["imports"][0] == "numpy")
+        .unwrap();
+    assert_eq!(numpy_import["import_policy"], "python_fallback");
+    assert_eq!(numpy_import["conversion"], "fallback");
+    assert!(numpy_import["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|diag| diag == "fallback-python-import-default"));
+
+    let bad_target = nodes
+        .iter()
+        .find(|node| node["kind"] == "function" && node["name"] == "bad_target")
+        .unwrap();
+    assert!(bad_target["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|diag| diag == "invalid-codon-macro-target-import-required"));
+}
+
+#[test]
+fn assert_ir_documents_import_policy_without_breaking_python() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = write_file(
+        dir.path(),
+        "import_assert_ir.py",
+        r#"#%codon
+import math
+import json
+
+print(math.sqrt(4))
+"#,
+    );
+    let py = dir.path().join("import_assert_ir_debug.py");
+
+    let out = run(&[
+        "assert-ir",
+        src.to_str().unwrap(),
+        "-o",
+        py.to_str().unwrap(),
+    ]);
+    assert_success(&out);
+    let text = fs::read_to_string(&py).unwrap();
+    assert!(text.contains("# codonx: import policy codon_native_required"));
+    assert!(text.contains("# codonx: import policy python_fallback_default"));
+
+    let py_out = Command::new("python3").arg(&py).output().unwrap();
+    assert_success(&py_out);
+}
+
+#[test]
 fn debug_and_codon_targets_select_opposite_branches() {
     let dir = tempfile::tempdir().unwrap();
     let src = write_file(

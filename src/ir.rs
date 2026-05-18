@@ -26,6 +26,10 @@ pub struct IrNode {
     pub name: Option<String>,
     pub range: IrRange,
     pub macros: Vec<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub import_policy: Option<ImportPolicy>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub imports: Vec<String>,
     pub conversion: ConversionStatus,
     pub diagnostics: Vec<String>,
 }
@@ -60,6 +64,13 @@ pub enum ConversionStatus {
     Guarded,
     Fallback,
     Unsupported,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ImportPolicy {
+    PythonFallback,
+    CodonNativeRequired,
 }
 
 #[derive(Debug)]
@@ -179,14 +190,17 @@ fn collect_stmt(stmt: &Stmt, lines: &LineIndex, macros: &mut [IrMacro], nodes: &
     let id = nodes.len();
     let range = lines.range(stmt.range());
     let attached_macros = attach_macros(id, range.start_line, macros);
-    let diagnostics = diagnostics_for_stmt(stmt);
+    let diagnostics = diagnostics_for_stmt(stmt, &attached_macros, macros);
+    let import_policy = import_policy_for_stmt(stmt, &attached_macros, macros);
     nodes.push(IrNode {
         id,
         kind: stmt_kind(stmt).to_string(),
         name: stmt_name(stmt),
         range,
         macros: attached_macros,
-        conversion: conversion_for_stmt(stmt),
+        import_policy,
+        imports: imports_for_stmt(stmt),
+        conversion: conversion_for_stmt(stmt, import_policy),
         diagnostics,
     });
 
@@ -278,11 +292,13 @@ fn stmt_name(stmt: &Stmt) -> Option<String> {
     }
 }
 
-fn conversion_for_stmt(stmt: &Stmt) -> ConversionStatus {
+fn conversion_for_stmt(stmt: &Stmt, import_policy: Option<ImportPolicy>) -> ConversionStatus {
     match stmt {
-        Stmt::FunctionDef(_) | Stmt::ClassDef(_) | Stmt::Import(_) | Stmt::ImportFrom(_) => {
-            ConversionStatus::Guarded
-        }
+        Stmt::FunctionDef(_) | Stmt::ClassDef(_) => ConversionStatus::Guarded,
+        Stmt::Import(_) | Stmt::ImportFrom(_) => match import_policy {
+            Some(ImportPolicy::CodonNativeRequired) => ConversionStatus::Guarded,
+            _ => ConversionStatus::Fallback,
+        },
         Stmt::Assign(_)
         | Stmt::AnnAssign(_)
         | Stmt::AugAssign(_)
@@ -306,8 +322,8 @@ fn conversion_for_stmt(stmt: &Stmt) -> ConversionStatus {
     }
 }
 
-fn diagnostics_for_stmt(stmt: &Stmt) -> Vec<String> {
-    match stmt {
+fn diagnostics_for_stmt(stmt: &Stmt, attached_macros: &[usize], macros: &[IrMacro]) -> Vec<String> {
+    let mut diagnostics = match stmt {
         Stmt::With(_) => vec!["fallback-with-runtime-context".to_string()],
         Stmt::Try(_) => vec!["fallback-exception-semantics".to_string()],
         Stmt::Raise(_) => vec!["fallback-exception-semantics".to_string()],
@@ -318,7 +334,94 @@ fn diagnostics_for_stmt(stmt: &Stmt) -> Vec<String> {
         Stmt::Nonlocal(_) => vec!["unsupported-nonlocal-scope-mutation".to_string()],
         Stmt::IpyEscapeCommand(_) => vec!["unsupported-ipython-escape-command".to_string()],
         _ => Vec::new(),
+    };
+
+    let has_codon = attached_macros
+        .iter()
+        .any(|id| macros.get(*id).is_some_and(|mac| is_codon_macro(&mac.text)));
+    if has_codon && !is_import_stmt(stmt) {
+        diagnostics.push("invalid-codon-macro-target-import-required".to_string());
     }
+
+    if is_import_stmt(stmt) && !has_codon {
+        diagnostics.push("fallback-python-import-default".to_string());
+    }
+
+    if has_codon && is_import_stmt(stmt) {
+        for module in imports_for_stmt(stmt) {
+            if !is_known_codon_native_module(&module) {
+                diagnostics.push(format!("codon-native-import-unverified:{module}"));
+            }
+        }
+    }
+
+    diagnostics
+}
+
+fn is_import_stmt(stmt: &Stmt) -> bool {
+    matches!(stmt, Stmt::Import(_) | Stmt::ImportFrom(_))
+}
+
+fn is_codon_macro(text: &str) -> bool {
+    matches!(text.trim(), "#%codon") || text.trim().starts_with("#%codon ")
+}
+
+fn import_policy_for_stmt(
+    stmt: &Stmt,
+    attached_macros: &[usize],
+    macros: &[IrMacro],
+) -> Option<ImportPolicy> {
+    if !is_import_stmt(stmt) {
+        return None;
+    }
+    let has_codon = attached_macros
+        .iter()
+        .any(|id| macros.get(*id).is_some_and(|mac| is_codon_macro(&mac.text)));
+    Some(if has_codon {
+        ImportPolicy::CodonNativeRequired
+    } else {
+        ImportPolicy::PythonFallback
+    })
+}
+
+fn imports_for_stmt(stmt: &Stmt) -> Vec<String> {
+    match stmt {
+        Stmt::Import(import) => import
+            .names
+            .iter()
+            .map(|alias| alias.name.as_str().to_string())
+            .collect(),
+        Stmt::ImportFrom(import_from) => import_from
+            .module
+            .as_ref()
+            .map(|module| vec![module.as_str().to_string()])
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
+fn is_known_codon_native_module(module: &str) -> bool {
+    let root = module.split('.').next().unwrap_or(module);
+    matches!(
+        root,
+        "argparse"
+            | "collections"
+            | "cmath"
+            | "csv"
+            | "datetime"
+            | "functools"
+            | "glob"
+            | "heapq"
+            | "itertools"
+            | "json"
+            | "math"
+            | "os"
+            | "random"
+            | "re"
+            | "statistics"
+            | "sys"
+            | "time"
+    )
 }
 
 struct AssertIrGenerator<'a> {
@@ -384,15 +487,26 @@ impl<'a> AssertIrGenerator<'a> {
     }
 
     fn render_stmt(&mut self, stmt: &Stmt, return_type: Option<&str>) {
-        for diagnostic in diagnostics_for_stmt(stmt) {
-            self.push_line(
-                self.indent_for_range(stmt.range()),
-                &format!("# codonx: {diagnostic}"),
-            );
+        if !is_import_stmt(stmt) {
+            for diagnostic in diagnostics_for_stmt(stmt, &[], &[]) {
+                self.push_line(
+                    self.indent_for_range(stmt.range()),
+                    &format!("# codonx: {diagnostic}"),
+                );
+            }
         }
 
         match stmt {
             Stmt::FunctionDef(function) => self.render_function(function),
+            Stmt::Import(_) | Stmt::ImportFrom(_) => {
+                let indent = self.indent_for_range(stmt.range());
+                if self.has_leading_codon_macro(stmt.range()) {
+                    self.push_line(indent, "# codonx: import policy codon_native_required");
+                } else {
+                    self.push_line(indent, "# codonx: import policy python_fallback_default");
+                }
+                self.push_source(stmt.range());
+            }
             Stmt::Return(ret) => {
                 if let (Some(value), Some(type_name)) = (&ret.value, return_type) {
                     let indent = self.indent_for_range(stmt.range());
@@ -514,6 +628,18 @@ impl<'a> AssertIrGenerator<'a> {
             Ok(idx) => self.line_starts[idx],
             Err(idx) => self.line_starts[idx.saturating_sub(1)],
         }
+    }
+
+    fn has_leading_codon_macro(&self, range: TextRange) -> bool {
+        let byte = range.start().to_usize();
+        let line_start = self.line_start_for_byte(byte);
+        let prefix = &self.source[..line_start];
+        prefix
+            .lines()
+            .rev()
+            .map(str::trim)
+            .take_while(|line| line.is_empty() || line.starts_with("#%"))
+            .any(is_codon_macro)
     }
 
     fn codon_type_name(&self, expr: &Expr) -> Option<String> {

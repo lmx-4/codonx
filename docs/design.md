@@ -260,6 +260,11 @@ metadata. The project-owned boundary is CodonX IR: that is where macro hints,
 guard intent, fallback decisions, diagnostics, and future bidirectional
 projection should live.
 
+Import planning is compatibility-first. A Python import is assumed to be a
+CPython fallback import unless the user places `#%codon` immediately before it.
+That keeps third-party Python packages usable by default while making Codon
+native standard-library intent explicit and diagnosable.
+
 The 0.2.x line should not promise full Python-to-Codon conversion. Its job is to
 make safe conversion, guarded conversion, fallback, and unsupported regions
 explicit and testable.

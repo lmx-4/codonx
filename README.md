@@ -161,6 +161,17 @@ current CodonX AST view. `assert-ir` emits executable Python semantic IR: it
 keeps the program shape and inserts Codon-facing runtime guards around supported
 annotations and returns. These commands do not yet generate Codon.
 
+For Python imports, 0.2.x is compatibility-first: imports are treated as CPython
+fallback candidates by default. Add `#%codon` immediately before an import to
+require Codon native import semantics:
+
+```python
+#%codon
+import math
+
+import numpy as np  # planned as CPython fallback
+```
+
 ## The Central Idea: Explicit Target Branches
 
 Python and Codon are close enough to share a lot of code, but not close enough

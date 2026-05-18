@@ -85,6 +85,16 @@ python3.12 app_assert_ir.py
 已支持的注解和返回值插入面向 Codon 语义的运行期 guard。它们目前不生成
 Codon 代码。
 
+0.2.x 对 Python import 采用兼容优先：默认把导入视为 CPython fallback
+候选。如果某个 import 必须使用 Codon 原生库，在它前面加 `#%codon`：
+
+```python
+#%codon
+import math
+
+import numpy as np  # 规划为 CPython fallback
+```
+
 如果 `codon` 不在 `PATH`：
 
 ```bash
