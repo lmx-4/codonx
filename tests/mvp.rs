@@ -43,6 +43,110 @@ fn assert_success(out: &std::process::Output) {
 }
 
 #[test]
+fn ruff_frontend_emits_json_ir_for_python312_source() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = write_file(
+        dir.path(),
+        "frontend.py",
+        r#"#%parallel for
+from math import sqrt
+
+class Box[T]:
+    def __init__(self, value: T):
+        self.value = value
+
+def total(xs: list[int]) -> int:
+    acc = 0
+    for value in xs:
+        acc += value
+    return acc
+
+assert total([1, 2, 3]) == 6
+"#,
+    );
+    let ir = dir.path().join("frontend_ir.json");
+
+    let out = run(&["ir", src.to_str().unwrap(), "-o", ir.to_str().unwrap()]);
+    assert_success(&out);
+    let value: serde_json::Value = serde_json::from_str(&fs::read_to_string(ir).unwrap()).unwrap();
+    assert_eq!(value["schema_version"], 1);
+    assert_eq!(value["frontend"], "ruff_python_parser");
+    assert!(value["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|node| { node["kind"] == "function" && node["name"] == "total" }));
+    assert!(value["macros"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|mac| { mac["text"] == "#%parallel for" && mac["attached_node"].is_number() }));
+}
+
+#[test]
+fn ruff_frontend_emits_executable_python_assert_ir() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = write_file(
+        dir.path(),
+        "assert_ir.py",
+        r#"def add(a: int, b: int) -> int:
+    return a + b
+
+assert add(1, 2) == 3
+"#,
+    );
+    let py = dir.path().join("assert_ir_debug.py");
+
+    let out = run(&[
+        "assert-ir",
+        src.to_str().unwrap(),
+        "-o",
+        py.to_str().unwrap(),
+    ]);
+    assert_success(&out);
+    let text = fs::read_to_string(&py).unwrap();
+    assert!(text.contains("def add(a: int, b: int) -> int:"));
+    assert!(text.contains("assert __codonx_guard(a, \"int\")"));
+    assert!(text.contains("assert __codonx_guard(b, \"int\")"));
+    assert!(text.contains("__codonx_ret = a + b"));
+    assert!(text.contains("assert __codonx_guard(__codonx_ret, \"int\")"));
+    assert!(text.contains("return __codonx_ret"));
+
+    let py_out = Command::new("python3").arg(&py).output().unwrap();
+    assert_success(&py_out);
+}
+
+#[test]
+fn assert_ir_guards_annotated_assignments() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = write_file(
+        dir.path(),
+        "annotated.py",
+        r#"def work(x: int) -> int:
+    y: int = x + 1
+    return y
+
+assert work(2) == 3
+"#,
+    );
+    let py = dir.path().join("annotated_assert_ir.py");
+
+    let out = run(&[
+        "assert-ir",
+        src.to_str().unwrap(),
+        "-o",
+        py.to_str().unwrap(),
+    ]);
+    assert_success(&out);
+    let text = fs::read_to_string(&py).unwrap();
+    assert!(text.contains("y: int = x + 1"));
+    assert!(text.contains("assert __codonx_guard(y, \"int\")"));
+
+    let py_out = Command::new("python3").arg(&py).output().unwrap();
+    assert_success(&py_out);
+}
+
+#[test]
 fn debug_and_codon_targets_select_opposite_branches() {
     let dir = tempfile::tempdir().unwrap();
     let src = write_file(

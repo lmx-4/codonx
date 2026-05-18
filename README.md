@@ -22,6 +22,11 @@ local, and testable.
 
 Current status: **0.1.4 local AST/span rewrite MVP / experimental**.
 
+The next planned line is **0.2.x Ruff frontend + CodonX IR**. 0.2.x is intended
+to parse Python 3.12 through Ruff, bind `#%` comment macros to AST nodes, and
+classify code as `codon_native`, `guarded`, `fallback`, or `unsupported` before
+any Codon generation. See [docs/roadmap-0.2.x.md](docs/roadmap-0.2.x.md).
+
 ## Hard Requirements
 
 `codonx` 0.1.4 is intentionally narrow.
@@ -61,6 +66,10 @@ A codonx-compatible file may contain:
 `codonx` is not a general Python-to-Codon converter. It is also not a complete
 Codon-to-Python transpiler. It is a conservative preprocessing layer for people
 who already intend to run the release path under Codon.
+
+The planned 0.2.x work starts the foundation for that larger direction, but it
+does so by adding a CodonX IR and explicit fallback diagnostics first, not by
+claiming full automatic conversion.
 
 ## Install
 
@@ -138,6 +147,19 @@ codonx check --assert full hello.codon
 
 `check` is not a Codon type checker. The Codon compiler remains the source of
 truth for release behavior.
+
+Experimental 0.2.x frontend work is available behind explicit commands:
+
+```bash
+codonx ir app.py -o app_ir.json
+codonx assert-ir app.py -o app_assert_ir.py
+python3.12 app_assert_ir.py
+```
+
+`ir` parses Python 3.12 source through Ruff and emits a debug JSON dump of the
+current CodonX AST view. `assert-ir` emits executable Python semantic IR: it
+keeps the program shape and inserts Codon-facing runtime guards around supported
+annotations and returns. These commands do not yet generate Codon.
 
 ## The Central Idea: Explicit Target Branches
 

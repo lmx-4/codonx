@@ -238,7 +238,31 @@ Near-term work should focus on:
 - widening local AST coverage only where a concrete rewrite needs it;
 - strengthening diagnostics for unsupported but recognized syntax;
 - improving release/debug smoke tests;
+- preserving the 0.1.x Codon-first workflow while preparing the 0.2.x frontend
+  transition;
 - keeping documentation aligned with actual behavior.
+
+The next architecture step is documented in
+[`roadmap-0.2.x.md`](roadmap-0.2.x.md). The short version is:
+
+```text
+Python 3.12 source
+    -> Ruff parser AST and token stream
+    -> CodonX IR
+    -> macro/hint binding
+    -> convertibility analysis
+    -> guarded Codon candidate output or fallback diagnostics
+```
+
+0.2.x should use Ruff as the Python parser frontend, not fork it first. `#%`
+macros should remain comments and be attached to AST nodes by token/source-range
+metadata. The project-owned boundary is CodonX IR: that is where macro hints,
+guard intent, fallback decisions, diagnostics, and future bidirectional
+projection should live.
+
+The 0.2.x line should not promise full Python-to-Codon conversion. Its job is to
+make safe conversion, guarded conversion, fallback, and unsupported regions
+explicit and testable.
 
 Mid-term work may explore:
 

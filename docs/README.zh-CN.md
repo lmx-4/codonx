@@ -16,6 +16,11 @@
 
 当前版本：**0.1.4 local AST/span rewrite MVP / experimental**。
 
+下一条规划线是 **0.2.x Ruff frontend + CodonX IR**：用 Ruff 解析 Python
+3.12，把 `#%` 注释宏绑定到 AST 节点，再在 CodonX IR 中把代码分成
+`codon_native`、`guarded`、`fallback`、`unsupported`。详细规则见
+[roadmap-0.2.x.md](roadmap-0.2.x.md)。
+
 ## 硬性环境要求
 
 0.1.4 不追求“到处能跑”，它只支持一条明确路线。
@@ -38,6 +43,10 @@
 - Codon-only 构造：`@par`、`@llvm`、`@extend`、Python interop。
 - 目标分支指令：`#%ifpy`、`#%ifcodon`、`#%else`、`#%endif`。
 - Codon 子进程环境指令：`#%define CODON_PYTHON`、`#%define CODON_DEBUG`。
+
+0.2.x 会开始为更长期的 Python/Codon 双向投影打基础，但第一步不是承诺
+“任意 Python 自动转 Codon”，而是先建立稳定 IR、宏绑定、可转译性分析和
+明确 fallback 诊断。
 
 ## 最小示例
 
@@ -62,6 +71,19 @@ python3.12 hello.py
 codonx run -release hello.codon
 codonx build -release -o dist/hello hello.codon
 ```
+
+0.2.x 的第一批实验命令已经独立接入：
+
+```bash
+codonx ir app.py -o app_ir.json
+codonx assert-ir app.py -o app_assert_ir.py
+python3.12 app_assert_ir.py
+```
+
+`ir` 用 Ruff 解析 Python 3.12 源码并输出当前 CodonX AST 视图的 JSON
+调试 dump；`assert-ir` 生成可执行的 Python 语义 IR：保留程序形状，并围绕
+已支持的注解和返回值插入面向 Codon 语义的运行期 guard。它们目前不生成
+Codon 代码。
 
 如果 `codon` 不在 `PATH`：
 

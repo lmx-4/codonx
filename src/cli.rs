@@ -71,4 +71,18 @@ pub enum Command {
         #[arg(long, value_enum, default_value_t = AssertArg::Shallow)]
         assert: AssertArg,
     },
+
+    /// Parse Python 3.12 source with Ruff and emit a CodonX debug JSON dump.
+    Ir {
+        input: PathBuf,
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+
+    /// Parse Python 3.12 source with Ruff and emit Python semantic assert IR.
+    AssertIr {
+        input: PathBuf,
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
 }

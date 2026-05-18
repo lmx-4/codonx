@@ -4,6 +4,7 @@ mod directive;
 mod emit;
 mod error;
 mod guard;
+mod ir;
 mod report;
 mod rewrite;
 mod source;
@@ -151,6 +152,14 @@ fn default_dbg_output(input: &Path) -> PathBuf {
 
 fn default_codon_output(input: &Path) -> PathBuf {
     sibling_with_suffix(input, "_pre", "codon")
+}
+
+fn default_ir_output(input: &Path) -> PathBuf {
+    sibling_with_suffix(input, "_ir", "json")
+}
+
+fn default_assert_ir_output(input: &Path) -> PathBuf {
+    sibling_with_suffix(input, "_assert_ir", "py")
 }
 
 fn sibling_with_suffix(input: &Path, suffix: &str, ext: &str) -> PathBuf {
@@ -469,7 +478,24 @@ fn main() -> anyhow::Result<()> {
                 rep_codon.warnings.len()
             )?;
         }
-        None => bail!("expected --dbg or a subcommand: codon, run, build, check"),
+        Some(Command::Ir { input, output }) => {
+            let ir = ir::build_ir(input)?;
+            let text = ir::render_ir_json(&ir)?;
+            let output = output
+                .clone()
+                .or_else(|| cli.output.clone())
+                .unwrap_or_else(|| default_ir_output(input));
+            write_or_stdout(Some(output), &text)?;
+        }
+        Some(Command::AssertIr { input, output }) => {
+            let text = ir::render_assert_ir_python(input)?;
+            let output = output
+                .clone()
+                .or_else(|| cli.output.clone())
+                .unwrap_or_else(|| default_assert_ir_output(input));
+            write_or_stdout(Some(output), &text)?;
+        }
+        None => bail!("expected --dbg or a subcommand: codon, run, build, check, ir, assert-ir"),
     }
 
     Ok(())
