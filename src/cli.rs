@@ -85,4 +85,23 @@ pub enum Command {
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
+
+    /// Parse Python 3.12 source with Ruff and emit a conservative Codon candidate.
+    PyCodon {
+        input: PathBuf,
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+
+    /// Generate a conservative Codon candidate from Python, then invoke `codon run`.
+    PyRun {
+        #[arg(allow_hyphen_values = true, trailing_var_arg = true)]
+        args: Vec<String>,
+    },
+
+    /// Generate a conservative Codon candidate from Python, then invoke `codon build`.
+    PyBuild {
+        #[arg(allow_hyphen_values = true, trailing_var_arg = true)]
+        args: Vec<String>,
+    },
 }

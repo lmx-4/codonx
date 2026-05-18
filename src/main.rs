@@ -162,6 +162,10 @@ fn default_assert_ir_output(input: &Path) -> PathBuf {
     sibling_with_suffix(input, "_assert_ir", "py")
 }
 
+fn default_py_codon_output(input: &Path) -> PathBuf {
+    sibling_with_suffix(input, "_py", "codon")
+}
+
 fn sibling_with_suffix(input: &Path, suffix: &str, ext: &str) -> PathBuf {
     let stem = input
         .file_stem()
@@ -299,6 +303,25 @@ fn write_preprocessed_codon(input: &Path, output: &Path) -> anyhow::Result<Codon
     Ok(preprocessed.defines)
 }
 
+fn collect_defines_from_input(input: &Path) -> anyhow::Result<CodonxDefines> {
+    let file = input.display().to_string();
+    let lines = read_source(input).with_context(|| format!("failed to read {}", file))?;
+    let (_lines, defines) = collect_defines(&file, lines)?;
+    Ok(defines)
+}
+
+fn write_python_codon_candidate(input: &Path, output: &Path) -> anyhow::Result<CodonxDefines> {
+    let defines = collect_defines_from_input(input)?;
+    let text = ir::render_codon_candidate(input)?;
+    if let Some(parent) = output.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)?;
+        }
+    }
+    fs::write(output, text)?;
+    Ok(defines)
+}
+
 fn invoke_codon(
     cli: &Cli,
     subcommand: &str,
@@ -401,6 +424,49 @@ fn invoke_codon(
     Ok(status.code().unwrap_or(1))
 }
 
+fn invoke_python_codon(
+    cli: &Cli,
+    subcommand: &str,
+    original_args: &[String],
+) -> anyhow::Result<i32> {
+    let input_idx = find_codon_input_arg(original_args).ok_or_else(|| {
+        anyhow!(
+            "codonx py-{} requires a Python source file argument",
+            subcommand
+        )
+    })?;
+    let input = PathBuf::from(&original_args[input_idx]);
+    if input.as_os_str() == "-" {
+        bail!("codonx cannot generate Codon from stdin input '-'");
+    }
+
+    let generated = default_py_codon_output(&input);
+    let defines = write_python_codon_candidate(&input, &generated)?;
+
+    let mut args = original_args.to_vec();
+    args[input_idx] = absolute_path(&generated)?.display().to_string();
+
+    if subcommand == "build" && !has_output_arg(&args) {
+        let output = absolute_path(&build_output_for_original(&input, original_args))?;
+        args.insert(input_idx, output.display().to_string());
+        args.insert(input_idx, "-o".to_string());
+    }
+
+    let mut cmd = ProcessCommand::new(codon_bin(cli));
+    cmd.arg(subcommand).args(&args);
+    apply_codonx_envs(&mut cmd, &defines, None);
+
+    let status = cmd
+        .status()
+        .with_context(|| format!("failed to run codon {}", subcommand))?;
+
+    if !cli.keep_pre {
+        let _ = fs::remove_file(&generated);
+    }
+
+    Ok(status.code().unwrap_or(1))
+}
+
 fn check_python_syntax(text: &str) -> anyhow::Result<()> {
     let tmp = std::env::temp_dir().join(format!("codonx_check_{}.py", std::process::id()));
     fs::write(&tmp, text)?;
@@ -495,7 +561,25 @@ fn main() -> anyhow::Result<()> {
                 .unwrap_or_else(|| default_assert_ir_output(input));
             write_or_stdout(Some(output), &text)?;
         }
-        None => bail!("expected --dbg or a subcommand: codon, run, build, check, ir, assert-ir"),
+        Some(Command::PyCodon { input, output }) => {
+            let text = ir::render_codon_candidate(input)?;
+            let output = output
+                .clone()
+                .or_else(|| cli.output.clone())
+                .unwrap_or_else(|| default_py_codon_output(input));
+            write_or_stdout(Some(output), &text)?;
+        }
+        Some(Command::PyRun { args }) => {
+            let code = invoke_python_codon(&cli, "run", args)?;
+            std::process::exit(code);
+        }
+        Some(Command::PyBuild { args }) => {
+            let code = invoke_python_codon(&cli, "build", args)?;
+            std::process::exit(code);
+        }
+        None => bail!(
+            "expected --dbg or a subcommand: codon, run, build, check, ir, assert-ir, py-codon, py-run, py-build"
+        ),
     }
 
     Ok(())

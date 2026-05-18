@@ -265,6 +265,16 @@ CPython fallback import unless the user places `#%codon` immediately before it.
 That keeps third-party Python packages usable by default while making Codon
 native standard-library intent explicit and diagnosable.
 
+The first `py-codon` generator is intentionally compile-first. It uses Ruff to
+locate imports, strips codonx control comments, keeps native-marked imports as
+Codon imports, rewrites default imports to Codon's Python interop form, and
+preserves the remaining Python/Codon common subset. `#%define CODON_PYTHON`
+cannot be embedded as executable Codon code, so the generator surfaces it in the
+candidate header as the environment value the caller should inject into the
+Codon compile/run process. The `py-run` and `py-build` wrappers perform that
+injection automatically while still delegating release semantics to the real
+Codon compiler.
+
 The 0.2.x line should not promise full Python-to-Codon conversion. Its job is to
 make safe conversion, guarded conversion, fallback, and unsupported regions
 explicit and testable.

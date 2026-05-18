@@ -150,16 +150,22 @@ before the line is considered complete.
 - Reject ambiguous macro placement with diagnostics.
 - Add tests for function, class, loop, assignment, and inline macro placement.
 
-### 0.2.2: Convertibility Analysis
+### 0.2.2: Convertibility Analysis and First Codon Candidate
 
 - Analyze function-level and statement-level convertibility.
 - Classify nodes as `codon_native`, `guarded`, `fallback`, or `unsupported`.
 - Explain every fallback or unsupported decision in diagnostics.
 - Keep the rule conservative: no silent semantic guessing.
+- Add `codonx py-codon <input.py>` as a compile-first candidate generator.
+- Route default Python imports through Codon's `from python import ...`
+  fallback, while `#%codon` imports keep native Codon import semantics.
+- Surface `#%define CODON_PYTHON` in the generated candidate so the caller knows
+  which `CODON_PYTHON` value to inject into the Codon process.
 
-### 0.2.3: Conservative Python -> Codon Candidate Generation
+### 0.2.3: Safer Native Python -> Codon Generation
 
-- Generate Codon only for functions and statements classified as safe.
+- Expand generation beyond import policy and common-subset source preservation.
+- Generate Codon rewrites only for functions and statements classified as safe.
 - Preserve unsupported regions through diagnostics or explicit fallback stubs.
 - Do not claim whole-file conversion unless every required region is safe.
 - Reuse 0.1.x numeric and type policy: prefer `int` and `float`, treat fixed

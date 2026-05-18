@@ -33,6 +33,21 @@ fn local_codon_bin() -> Option<String> {
         .map(|_| "codon".to_string())
 }
 
+fn python312_libpython() -> Option<String> {
+    let out = Command::new("python3.12")
+        .arg("-c")
+        .arg(
+            "import pathlib, sysconfig; lib=sysconfig.get_config_var('LDLIBRARY'); d=sysconfig.get_config_var('LIBDIR'); print(pathlib.Path(d, lib) if lib and d else '')",
+        )
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!path.is_empty() && Path::new(&path).exists()).then_some(path)
+}
+
 fn assert_success(out: &std::process::Output) {
     assert!(
         out.status.success(),
@@ -226,6 +241,112 @@ print(math.sqrt(4))
 
     let py_out = Command::new("python3").arg(&py).output().unwrap();
     assert_success(&py_out);
+}
+
+#[test]
+fn py_codon_generates_conservative_import_fallback_candidate() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = write_file(
+        dir.path(),
+        "candidate.py",
+        r#"#%define CODON_PYTHON "/tmp/libpython3.12.so"
+#%codon
+import math
+import json as pyjson
+from pathlib import Path
+
+def work(x: int) -> int:
+    return int(math.sqrt(x * x))
+
+print(work(4))
+"#,
+    );
+    let codon = dir.path().join("candidate.codon");
+
+    let out = run(&[
+        "py-codon",
+        src.to_str().unwrap(),
+        "-o",
+        codon.to_str().unwrap(),
+    ]);
+    assert_success(&out);
+
+    let text = fs::read_to_string(codon).unwrap();
+    assert!(text.contains("# codonx: compile/run with CODON_PYTHON=/tmp/libpython3.12.so"));
+    assert!(text.contains("import math"));
+    assert!(text.contains("from python import json as pyjson"));
+    assert!(text.contains("from python import pathlib as __codonx_py_pathlib"));
+    assert!(text.contains("Path = __codonx_py_pathlib.Path"));
+    assert!(text.contains("def work(x: int) -> int:"));
+    assert!(!text.contains("#%define"));
+    assert!(!text.contains("#%codon"));
+}
+
+#[test]
+fn py_codon_candidate_runs_with_local_codon_when_available() {
+    let Some(codon_bin) = local_codon_bin() else {
+        eprintln!("skipping py-codon Codon run smoke test: codon not found");
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let src = write_file(
+        dir.path(),
+        "candidate_run.py",
+        r#"#%codon
+import math
+
+def work(x: int) -> int:
+    return int(math.sqrt(x * x))
+
+print(work(7))
+"#,
+    );
+    let codon = dir.path().join("candidate_run.codon");
+
+    let out = run(&[
+        "py-codon",
+        src.to_str().unwrap(),
+        "-o",
+        codon.to_str().unwrap(),
+    ]);
+    assert_success(&out);
+
+    let run_out = Command::new(codon_bin)
+        .arg("run")
+        .arg(&codon)
+        .output()
+        .unwrap();
+    assert_success(&run_out);
+    assert_eq!(String::from_utf8_lossy(&run_out.stdout).trim(), "7");
+}
+
+#[test]
+fn py_run_injects_codon_python_define_for_fallback_import_when_available() {
+    if local_codon_bin().is_none() {
+        eprintln!("skipping py-run fallback smoke test: codon not found");
+        return;
+    }
+    let Some(libpython) = python312_libpython() else {
+        eprintln!("skipping py-run fallback smoke test: python3.12 libpython not found");
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let src = write_file(
+        dir.path(),
+        "fallback_run.py",
+        &format!(
+            r#"#%define CODON_PYTHON "{libpython}"
+import math
+
+print(int(math.sqrt(81)))
+"#
+        ),
+    );
+
+    let out = run(&["py-run", src.to_str().unwrap()]);
+    assert_success(&out);
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "9");
+    assert!(!dir.path().join("fallback_run_py.codon").exists());
 }
 
 #[test]

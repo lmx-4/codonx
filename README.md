@@ -20,16 +20,17 @@ debug, and a Codon file that is fast enough to ship. Those files drift. `codonx`
 tries to keep one source of truth by making the Python/Codon split explicit,
 local, and testable.
 
-Current status: **0.1.4 local AST/span rewrite MVP / experimental**.
+Current status: **0.2.2 Ruff frontend + conservative Codon candidate MVP / experimental**.
 
-The next planned line is **0.2.x Ruff frontend + CodonX IR**. 0.2.x is intended
-to parse Python 3.12 through Ruff, bind `#%` comment macros to AST nodes, and
-classify code as `codon_native`, `guarded`, `fallback`, or `unsupported` before
-any Codon generation. See [docs/roadmap-0.2.x.md](docs/roadmap-0.2.x.md).
+The active line is **0.2.x Ruff frontend + CodonX IR**. 0.2.x parses Python
+3.12 through Ruff, binds `#%` comment macros to AST nodes, classifies code as
+`codon_native`, `guarded`, `fallback`, or `unsupported`, and now includes the
+first conservative `py-codon` generator. See
+[docs/roadmap-0.2.x.md](docs/roadmap-0.2.x.md).
 
 ## Hard Requirements
 
-`codonx` 0.1.4 is intentionally narrow.
+`codonx` 0.2.2 is intentionally narrow.
 
 - **Operating system:** Linux only.
 - **Python:** Python 3.12 or newer must be installed for debug output.
@@ -153,13 +154,26 @@ Experimental 0.2.x frontend work is available behind explicit commands:
 ```bash
 codonx ir app.py -o app_ir.json
 codonx assert-ir app.py -o app_assert_ir.py
+codonx py-codon app.py -o app.codon
+codonx py-run app.py
 python3.12 app_assert_ir.py
 ```
 
 `ir` parses Python 3.12 source through Ruff and emits a debug JSON dump of the
 current CodonX AST view. `assert-ir` emits executable Python semantic IR: it
 keeps the program shape and inserts Codon-facing runtime guards around supported
-annotations and returns. These commands do not yet generate Codon.
+annotations and returns. `py-codon` emits a conservative Codon candidate:
+native-marked imports are kept as Codon imports, default Python imports are
+routed through Codon's `from python import ...` interop, control macros are
+stripped, and the remaining Python/Codon common subset is preserved.
+
+`py-codon` is a compile-first bridge, not a full Python-to-Codon transpiler. If
+the generated file uses Python fallback imports, compile/run it in an environment
+where Codon can find the requested Python runtime. A source-level
+`#%define CODON_PYTHON "/path/to/libpython3.12.so"` is surfaced in the generated
+file header as the exact `CODON_PYTHON` value to inject into the Codon process.
+`py-run` and `py-build` perform that injection automatically before invoking the
+real Codon compiler.
 
 For Python imports, 0.2.x is compatibility-first: imports are treated as CPython
 fallback candidates by default. Add `#%codon` immediately before an import to
