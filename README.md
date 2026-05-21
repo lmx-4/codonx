@@ -20,7 +20,7 @@ debug, and a Codon file that is fast enough to ship. Those files drift. `codonx`
 tries to keep one source of truth by making the Python/Codon split explicit,
 local, and testable.
 
-Current status: **0.2.2 Ruff frontend + conservative Codon candidate MVP / experimental**.
+Current status: **0.2.3 Ruff frontend + conservative Python-to-Codon bridge / experimental**.
 
 The active line is **0.2.x Ruff frontend + CodonX IR**. 0.2.x parses Python
 3.12 through Ruff, binds `#%` comment macros to AST nodes, classifies code as
@@ -30,7 +30,7 @@ first conservative `py-codon` generator. See
 
 ## Hard Requirements
 
-`codonx` 0.2.2 is intentionally narrow.
+`codonx` 0.2.3 is intentionally narrow.
 
 - **Operating system:** Linux only.
 - **Python:** Python 3.12 or newer must be installed for debug output.
@@ -77,15 +77,15 @@ claiming full automatic conversion.
 Install the Linux x86_64 release binary:
 
 ```bash
-tar -xzf codonx-v0.1.4-x86_64-linux.tar.gz
-install -m 0755 codonx-v0.1.4-x86_64-linux/codonx ~/.local/bin/codonx
+tar -xzf codonx-v0.2.3-x86_64-linux.tar.gz
+install -m 0755 codonx-v0.2.3-x86_64-linux/codonx ~/.local/bin/codonx
 codonx --version
 ```
 
 Expected output:
 
 ```text
-codonx 0.1.4
+codonx 0.2.3
 ```
 
 Check the external toolchain:
@@ -156,6 +156,7 @@ codonx ir app.py -o app_ir.json
 codonx assert-ir app.py -o app_assert_ir.py
 codonx py-codon app.py -o app.codon
 codonx py-run app.py
+codonx py-build app.py
 python3.12 app_assert_ir.py
 ```
 
@@ -172,8 +173,10 @@ the generated file uses Python fallback imports, compile/run it in an environmen
 where Codon can find the requested Python runtime. A source-level
 `#%define CODON_PYTHON "/path/to/libpython3.12.so"` is surfaced in the generated
 file header as the exact `CODON_PYTHON` value to inject into the Codon process.
-`py-run` and `py-build` perform that injection automatically before invoking the
-real Codon compiler.
+`py-run` and `py-build` generate a temporary `.codon` candidate, inject
+`CODON_PYTHON`/`CODON_DEBUG` values from supported `#%define` lines, invoke the
+real Codon compiler, and remove the temporary candidate unless `--keep-pre` is
+set.
 
 For Python imports, 0.2.x is compatibility-first: imports are treated as CPython
 fallback candidates by default. Add `#%codon` immediately before an import to

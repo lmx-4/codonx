@@ -156,13 +156,24 @@ before the line is considered complete.
 - Classify nodes as `codon_native`, `guarded`, `fallback`, or `unsupported`.
 - Explain every fallback or unsupported decision in diagnostics.
 - Keep the rule conservative: no silent semantic guessing.
+- Establish the import policy that the first candidate generator will use:
+  default imports are CPython fallback candidates, while `#%codon` imports keep
+  native Codon import semantics.
+
+### 0.2.3: Compile-First Python -> Codon Bridge
+
 - Add `codonx py-codon <input.py>` as a compile-first candidate generator.
 - Route default Python imports through Codon's `from python import ...`
   fallback, while `#%codon` imports keep native Codon import semantics.
 - Surface `#%define CODON_PYTHON` in the generated candidate so the caller knows
   which `CODON_PYTHON` value to inject into the Codon process.
+- Add `codonx py-run` and `codonx py-build` wrappers that generate the
+  candidate, inject supported `#%define` values, invoke the real Codon compiler,
+  and clean temporary output unless `--keep-pre` is set.
+- Preserve the remaining Python/Codon common subset instead of claiming complete
+  native lowering.
 
-### 0.2.3: Safer Native Python -> Codon Generation
+### 0.2.4: Safer Native Python -> Codon Generation
 
 - Expand generation beyond import policy and common-subset source preservation.
 - Generate Codon rewrites only for functions and statements classified as safe.
@@ -171,21 +182,21 @@ before the line is considered complete.
 - Reuse 0.1.x numeric and type policy: prefer `int` and `float`, treat fixed
   width types as explicit low-level intent.
 
-### 0.2.4: Guarded Assert IR Integration
+### 0.2.5: Guarded Assert IR Integration
 
 - Route supported annotations through the existing guard/assert machinery.
 - Generate Python-debug-friendly assert IR from CodonX IR.
 - Keep guard insertion explainable in reports.
 - Ensure guard behavior remains a mismatch detector, not an equivalence proof.
 
-### 0.2.5: CPython Fallback Island Prototype
+### 0.2.6: CPython Fallback Island Prototype
 
 - Represent fallback regions explicitly in IR.
 - Prototype calling Python-backed code for unsupported functions.
 - Require diagnostics that make the boundary visible.
 - Avoid hidden performance cliffs: fallback must be reported.
 
-### 0.2.6: Practical Validation Gate
+### 0.2.7: Practical Validation Gate
 
 - Add a 300+ line Python fixture with `#%` hints.
 - Compare Python output with generated Codon/fallback behavior where feasible.

@@ -14,7 +14,7 @@
                 交给真实 codon 编译器执行
 ```
 
-当前版本：**0.2.2 Ruff frontend + conservative Codon candidate MVP / experimental**。
+当前版本：**0.2.3 Ruff frontend + conservative Python-to-Codon bridge / experimental**。
 
 当前主线是 **0.2.x Ruff frontend + CodonX IR**：用 Ruff 解析 Python
 3.12，把 `#%` 注释宏绑定到 AST 节点，在 CodonX IR 中把代码分成
@@ -24,7 +24,7 @@ Codon candidate。详细规则见
 
 ## 硬性环境要求
 
-0.1.4 不追求“到处能跑”，它只支持一条明确路线。
+0.2.3 不追求“到处能跑”，它只支持一条明确路线。
 
 - **系统：** 仅支持 Linux。
 - **Python：** 必须有 Python 3.12 或更新版本，用于运行 debug 输出。
@@ -80,6 +80,7 @@ codonx ir app.py -o app_ir.json
 codonx assert-ir app.py -o app_assert_ir.py
 codonx py-codon app.py -o app.codon
 codonx py-run app.py
+codonx py-build app.py
 python3.12 app_assert_ir.py
 ```
 
@@ -94,8 +95,9 @@ Python import 走 Codon 的 `from python import ...` 互操作回退，控制宏
 如果生成文件使用 Python fallback import，需要在 Codon 编译/运行进程中注入
 Python 运行时路径。源码中的
 `#%define CODON_PYTHON "/path/to/libpython3.12.so"` 会被写入生成文件头部，
-作为应注入的 `CODON_PYTHON` 值。`py-run` 和 `py-build` 会在调用真实
-Codon 编译器前自动完成这一步环境注入。
+作为应注入的 `CODON_PYTHON` 值。`py-run` 和 `py-build` 会先生成临时
+`.codon` candidate，再把支持的 `#%define` 注入真实 Codon 编译器进程，
+并在未设置 `--keep-pre` 时清理临时文件。
 
 0.2.x 对 Python import 采用兼容优先：默认把导入视为 CPython fallback
 候选。如果某个 import 必须使用 Codon 原生库，在它前面加 `#%codon`：

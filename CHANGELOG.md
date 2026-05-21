@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.2.3 - 2026-05-21
+
+Conservative Python-to-Codon bridge MVP.
+
+- Added `codonx py-codon <input.py>` to generate a conservative Codon candidate from Python 3.12 source parsed through Ruff.
+- Added `codonx py-run` and `codonx py-build` wrappers that generate the candidate, inject supported `#%define` environment values, invoke the real Codon compiler, and clean temporary output unless `--keep-pre` is set.
+- Routed default Python imports through Codon's `from python import ...` interop while preserving imports marked with `#%codon` as native Codon imports.
+- Surfaced `#%define CODON_PYTHON` in generated candidate headers and used it automatically in `py-run` / `py-build`.
+- Kept non-import source as a Python/Codon common-subset preservation path instead of claiming complete Python-to-Codon lowering.
+
+## 0.2.2 - 2026-05-21
+
+Import policy and macro attachment prototype.
+
+- Added `#%codon` import intent so users can require native Codon import semantics explicitly.
+- Kept unmarked Python imports compatibility-first by classifying them as CPython fallback candidates.
+- Added diagnostics for invalid `#%codon` placement and unverified native module assumptions.
+- Extended Ruff-backed IR output with macro, import-policy, convertibility, and diagnostic information.
+
+## 0.2.1 - 2026-05-21
+
+Executable Python assert IR refinement.
+
+- Reworked the Python-side IR direction so `assert-ir` emits legal Python code rather than treating JSON as the primary semantic artifact.
+- Preserved program shape while inserting Codon-facing runtime guards around supported parameters, assignments, and returns.
+- Kept JSON IR as a debug dump of the frontend view.
+
+## 0.2.0 - 2026-05-21
+
+Ruff frontend foundation.
+
+- Integrated Ruff parser crates for Python 3.12 frontend parsing.
+- Added `codonx ir <input.py>` to emit a structured debug view of parsed Python source.
+- Added the first `codonx assert-ir <input.py>` command for Codon-semantic Python debug output.
+- Preserved the existing 0.1.x Codon-first preprocessing, debug, run, build, and check flows.
+
 ## 0.1.4 - 2026-05-17
 
 Local AST guard consolidation and practical smoke release.
