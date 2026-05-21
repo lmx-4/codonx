@@ -1,79 +1,157 @@
 # codonx 中文说明
 
-`codonx` 是一个 **Linux-only、Codon-first、双目标前端预处理器**。
+`codonx` 解决的是一个很现实的问题：Python 好调试，Codon 适合 release，
+但项目一旦同时维护 `.py` 和 `.codon` 两份文件，逻辑很快就会漂移。
 
-它解决的问题很具体：很多项目一开始用 Python 写，因为调试方便；真正需要性能时再迁到 Codon。但这样很快会变成两份文件、两套思路、两条逐渐漂移的逻辑。`codonx` 的做法不是假装 Python 和 Codon 完全一样，而是把差异显式写在同一份源码里。
+`codonx` 的目标不是假装 Python 和 Codon 完全一样，而是把两者的差异变成
+可见、局部、可测试的工程边界。
 
 ```text
-一份 Codon-first 源码
-        |
-        +-- 生成 Python 3.12+ Debug Target
-        |       用于 IDE、pdb、pytest、断点和运行期 guard
-        |
-        +-- 生成/运行 Codon Release Target
-                交给真实 codon 编译器执行
+Codon-first 源码
+    -> Python 3.12+ debug 文件，带运行期 guard
+    -> Codon release 文件，交给真实 codon 编译器
+
+Python 3.12 源码，0.2.x 实验路径
+    -> Ruff parser frontend
+    -> CodonX debug/semantic IR
+    -> 保守 Codon candidate 或 CPython fallback import
 ```
 
-当前版本：**0.2.3 Ruff frontend + conservative Python-to-Codon bridge / experimental**。
+当前版本：**0.2.3 experimental**。
 
-当前主线是 **0.2.x Ruff frontend + CodonX IR**：用 Ruff 解析 Python
-3.12，把 `#%` 注释宏绑定到 AST 节点，在 CodonX IR 中把代码分成
-`codon_native`、`guarded`、`fallback`、`unsupported`，并开始生成保守的
-Codon candidate。详细规则见
-[roadmap-0.2.x.md](roadmap-0.2.x.md)。
+当前可靠主线仍是 0.1.x 建立的 Codon-first 工作流。0.2.x 新增 Ruff-backed
+Python 前端和第一版保守 `py-codon` bridge，但它还不是通用
+Python-to-Codon 转译器。
 
-## 硬性环境要求
+## 它想讲的故事
 
-0.2.3 不追求“到处能跑”，它只支持一条明确路线。
-
-- **系统：** 仅支持 Linux。
-- **Python：** 必须有 Python 3.12 或更新版本，用于运行 debug 输出。
-- **Codon：** 必须有官方 `codon` 编译器，用于 `codonx run`、`codonx build` 和 release 验证。
-- **Rust：** 只有从源码构建 `codonx` 时才需要。
-
-没有 Codon 编译器时，`codonx` 的核心工作流是不完整的。它不是 Codon 的替代品，而是围绕 Codon 编译器的一层轻量预处理。
-
-## 源码形态
-
-新项目建议使用普通 `.codon` 后缀。仓库里的示例仍保留 `.codonx`，主要是为了让“这是 codonx 方言示例”更明显；CLI 本身不依赖后缀。
-
-一份 codonx 兼容源码可以包含：
-
-- Codon/Python 风格类型：`int`、`float`、`list[int]`、`dict[str, int]`。
-- 明确低层位宽类型：`i32`、`u64`、`f32`、`Int[32]`。
-- Codon-only 构造：`@par`、`@llvm`、`@extend`、Python interop。
-- 目标分支指令：`#%ifpy`、`#%ifcodon`、`#%else`、`#%endif`。
-- Codon 子进程环境指令：`#%define CODON_PYTHON`、`#%define CODON_DEBUG`。
-
-0.2.x 会开始为更长期的 Python/Codon 双向投影打基础，但第一步不是承诺
-“任意 Python 自动转 Codon”，而是先建立稳定 IR、宏绑定、可转译性分析和
-明确 fallback 诊断。
-
-## 最小示例
+你写一份本来就准备跑在 Codon 下的源码：
 
 ```python
-def add(a: int, b: int) -> int:
-    c: int = a + b
-    return c
+def square_sum(xs: list[int]) -> int:
+    total: int = 0
+    for x in xs:
+        total += x * x
+    return total
 
-print(add(1, 2))
+print(square_sum([1, 2, 3]))
 ```
 
-生成 Python Debug Target：
+开发时生成 Python debug 文件：
 
 ```bash
-codonx --dbg hello.codon -o hello.py
-python3.12 hello.py
+codonx --dbg app.codon -o app_dbg.py
+python3.12 app_dbg.py
 ```
 
-走 Codon Release Target：
+发布时走 Codon：
 
 ```bash
-codonx run -release hello.codon
-codonx build -release -o dist/hello hello.codon
+codonx run -release app.codon
 ```
 
-0.2.x 的第一批实验命令已经独立接入：
+如果 Python 和 Codon 必须用不同实现，就直接写出来：
+
+```python
+def fill(out: list[int], n: int):
+    #%ifpy
+    for i in range(n):
+        out[i] = i * i
+    #%else
+    @par(schedule="dynamic", chunk_size=64)
+    for i in range(n):
+        out[i] = i * i
+    #%endif
+```
+
+Python debug 文件保留串行循环；Codon release 文件保留 `@par` 循环。
+这不是隐藏魔法，而是显式目标分支。
+
+## 硬性要求
+
+- 仅支持 Linux。
+- 需要 Python 3.12 或更新版本。
+- `codonx run`、`codonx build`、`py-run`、`py-build` 需要官方 `codon`
+  编译器。
+- 从源码构建时才需要 Rust。
+
+`codonx` 不是 Codon 替代品。它围绕真实 Codon 编译器做预处理、检查和候选
+文件生成。
+
+## 安装
+
+```bash
+tar -xzf codonx-v0.2.3-x86_64-linux.tar.gz
+install -m 0755 codonx-v0.2.3-x86_64-linux/codonx ~/.local/bin/codonx
+codonx --version
+```
+
+期望输出：
+
+```text
+codonx 0.2.3
+```
+
+检查外部工具：
+
+```bash
+python3.12 --version
+codon --version
+```
+
+如果 `codon` 不在 `PATH`：
+
+```bash
+codonx --codon-bin /opt/codon/bin/codon run -release app.codon
+```
+
+或：
+
+```bash
+export CODONX_CODON_BIN=/opt/codon/bin/codon
+```
+
+## 主工作流：Codon First
+
+生成 Python debug 文件：
+
+```bash
+codonx --dbg input.codon -o input_dbg.py
+python3.12 input_dbg.py
+```
+
+生成更强 guard 的 debug 文件：
+
+```bash
+codonx --dbg input.codon --assert full -o input_dbg.py --report codonx-report.json
+```
+
+只生成预处理后的 Codon 文件：
+
+```bash
+codonx codon input.codon -o input_pre.codon
+```
+
+通过真实 Codon 编译器运行或构建：
+
+```bash
+codonx run -release input.codon
+codonx build -release -o dist/app input.codon
+```
+
+检查指令结构和生成的 Python 语法：
+
+```bash
+codonx check input.codon
+codonx check --assert full input.codon
+```
+
+`check` 不是 Codon 类型检查器。release 语义仍以真实 `codon` 为准。
+
+## 实验工作流：Python Frontend
+
+0.2.x 开始从 Python 方向进入：源码先经过 Ruff 的 Python 3.12 parser，再变成
+CodonX 前端数据。
 
 ```bash
 codonx ir app.py -o app_ir.json
@@ -81,159 +159,117 @@ codonx assert-ir app.py -o app_assert_ir.py
 codonx py-codon app.py -o app.codon
 codonx py-run app.py
 codonx py-build app.py
-python3.12 app_assert_ir.py
 ```
 
-`ir` 用 Ruff 解析 Python 3.12 源码并输出当前 CodonX AST 视图的 JSON
-调试 dump；`assert-ir` 生成可执行的 Python 语义 IR：保留程序形状，并围绕
-已支持的注解和返回值插入面向 Codon 语义的运行期 guard。`py-codon`
-生成保守 Codon candidate：被标记为 Codon 原生的 import 保持原样，默认
-Python import 走 Codon 的 `from python import ...` 互操作回退，控制宏会被
-剥离，其余 Python/Codon 共同子集尽量保持源码形态。
+0.2.3 的真实行为很保守：
 
-`py-codon` 的第一目标是“能编译、能跑”，不是完整 Python-to-Codon 转译器。
-如果生成文件使用 Python fallback import，需要在 Codon 编译/运行进程中注入
-Python 运行时路径。源码中的
-`#%define CODON_PYTHON "/path/to/libpython3.12.so"` 会被写入生成文件头部，
-作为应注入的 `CODON_PYTHON` 值。`py-run` 和 `py-build` 会先生成临时
-`.codon` candidate，再把支持的 `#%define` 注入真实 Codon 编译器进程，
-并在未设置 `--keep-pre` 时清理临时文件。
+- `ir` 输出 Ruff-backed CodonX 视图的 JSON debug dump。
+- `assert-ir` 输出合法 Python 代码，并围绕已支持注解、赋值和返回值插入
+  Codon-facing runtime guard。
+- `py-codon` 输出 compile-first Codon candidate。
+- `py-run` 和 `py-build` 生成 candidate，把支持的 `#%define` 注入 Codon
+  子进程，调用 `codon run` 或 `codon build`，未设置 `--keep-pre` 时删除临时
+  candidate。
 
-0.2.x 对 Python import 采用兼容优先：默认把导入视为 CPython fallback
-候选。如果某个 import 必须使用 Codon 原生库，在它前面加 `#%codon`：
+import 规则是兼容优先。普通 Python import 会变成 Codon Python interop：
+
+```python
+import json as pyjson
+```
+
+会变成：
+
+```python
+from python import json as pyjson
+```
+
+如果 import 必须保持 Codon 原生语义，需要显式标记：
 
 ```python
 #%codon
 import math
-
-import numpy as np  # 规划为 CPython fallback
 ```
 
-如果 `codon` 不在 `PATH`：
+`#%define CODON_PYTHON /path/to/libpython3.12.so` 会出现在生成 candidate 的
+头部，并由 `py-run` / `py-build` 自动注入。
 
-```bash
-codonx --codon-bin /opt/codon/bin/codon run -release hello.codon
-```
+这条路径目前保留剩余 Python/Codon 共同子集，不承诺把任意 Python 语义降到
+原生 Codon。
 
-也可以使用环境变量：
+## 源码指令
 
-```bash
-export CODONX_CODON_BIN=/opt/codon/bin/codon
-```
-
-## 核心机制：差异显式化
-
-Python 和 Codon 的差异不应该藏在魔法转换里。需要不同实现时，直接写目标分支：
-
-```python
-def square_all(xs: list[int]) -> list[int]:
-    out: list[int] = [0 for _ in range(len(xs))]
-
-    #%ifpy
-    for i in range(len(xs)):
-        out[i] = xs[i] * xs[i]
-    #%else
-    @par(schedule="dynamic", chunk_size=64)
-    for i in range(len(xs)):
-        out[i] = xs[i] * xs[i]
-    #%endif
-
-    return out
-```
-
-Python debug 输出保留串行循环；Codon release 输出保留 `@par` 并行循环。
-
-`#%ifdebug` 仍作为旧别名兼容，但新代码应该使用 `#%ifpy`。
-
-## 0.1.4 的类型语义
-
-0.1.4 延续 Codon 的常规数值风格：主线代码优先写 `int` 和 `float`。
-
-```python
-def mean(xs: list[int]) -> float:
-    total: int = 0
-    for x in xs:
-        total += x
-    return float(total) / float(len(xs))
-```
-
-`i32`、`u64`、`f32` 这类类型不是默认推断目标，而是明确的低层位宽意图：
-
-```python
-def clamp_i32(x: i32) -> i32:
-    return i32(x)
-```
-
-Python debug guard 会尽量检查这些范围，但 release 语义仍由 Codon 编译器决定。如果 Codon 拒绝 `int` 和 `i32` 混合运算，就应该改源码，而不是让 `codonx` 猜。
-
-## Python Debug Target
-
-0.1.4 使用顶层 `--dbg` 生成 Python 文件，没有 `codonx py` 子命令。
-
-```bash
-codonx --dbg input.codon -o input_dbg.py
-codonx --dbg input.codon --assert full -o input_dbg.py --report codonx-report.json
-python3.12 input_dbg.py
-```
-
-断言模式：
+目标选择：
 
 ```text
-off
-shallow
-full
+#%ifpy
+#%ifcodon
+#%else
+#%endif
 ```
 
-默认是 `shallow`。
+兼容别名：
 
-guard 能覆盖的主要范围：
-
-- 整数和固定宽度整数范围。
-- `float`、`f32`、`f64`、`float32`。
-- `bool`、`complex`、ASCII `str`。
-- `Optional`、`Union`、软化的 `Literal`。
-- `list`、`set`、`dict`、`tuple` 的外层形状，`--assert full` 下检查部分元素。
-
-这些 guard 是错误探测器，不是等价性证明。
-
-## Codon Release Target
-
-```bash
-codonx codon input.codon -o input_pre.codon
-codonx run -release input.codon
-codonx build -release -o dist/app input.codon
+```text
+#%ifdebug
 ```
 
-`run` 和 `build` 是薄包装：先做指令选择和预处理，再调用真实 `codon run` 或 `codon build`。
+`#%ifdebug` 仍等价于 `#%ifpy`，但新代码应该使用 `#%ifpy`。
 
-保留中间 Codon 文件：
+Codon 子进程 hook：
 
-```bash
-codonx --keep-pre run -release input.codon
+```text
+#%define CODON_PYTHON <path>
+#%define CODON_DEBUG <path>
 ```
 
-## 当前实现边界
+0.2.x Python import 意图：
 
-0.1.4 已经不是纯正则替换。语义改写收口到局部 AST/span 和 token-aware 机制；正则不再作为机械语义改写的最终依据。
+```text
+#%codon
+```
 
-当前适合：
+`#%codon` 必须紧贴在它描述的 import 前面。
 
-- 结构清晰的 Codon-first 单文件。
-- 显式写出 Python/Codon 差异的代码。
-- 用 Python debug target 进行早期错误检查。
-- 用真实 Codon 编译器验证 release 路径。
+## Guard 语义
 
-当前不适合：
+Python debug target 可以为已支持注解插入运行期 guard。
+
+当前支持的意图包括：
+
+- `int`、`float`、`bool`、`complex`、ASCII `str`。
+- `i32`、`u64`、`Int[32]`、`UInt[64]`、`byte` 等固定宽度整数意图。
+- `f32`、`f64`、`float32` 等浮点别名。
+- `Optional`、`Union`、软化的 `Literal`、`NoneType`。
+- `list`、`set`、`dict`、`tuple` 的外层形状，`--assert full` 下做更深元素检查。
+
+这些 guard 是错误探测器，不是等价性证明。它们不会模拟并行 race、GPU 执行、
+Codon overload resolution、Python interop 转换细节或完整浮点差异。
+
+## 当前适合什么
+
+适合：
+
+- Codon-first 单文件程序。
+- 显式写出 Python/Codon 差异。
+- 生成 Python 3.12 debug 文件做早期检查。
+- 把 release 路径交给真实 Codon 编译器。
+- 在能接受 fallback 的前提下实验 Python -> Codon candidate。
+
+不适合：
 
 - 任意 Python 自动转 Codon。
 - 任意 Codon 自动转 Python。
 - 完整 Codon parser。
-- 完整 Python parser。
-- GPU、并行 race、LLVM、C pointer、JIT 语义模拟。
-- 依赖 `codonx` 证明 Python/Codon 行为完全等价。
+- 全程序类型推断。
+- 模拟 LLVM、C pointer、GPU、JIT 或并行 race 语义。
+- 把 debug 输出当成 release 等价性证明。
 
-## 一句话总结
+项目规则很简单：如果一个改写不能局部、可解释、可测试，`codonx` 就应该保留、
+警告，或要求你写显式分支。
 
-`codonx` 不消灭 Python/Codon 差异。
+## 更多文档
 
-它把差异显式化、局部化、可测试化，并把 release 路径交还给真正的 Codon 编译器。
+- [设计说明](design.md)
+- [0.1.x roadmap](roadmap-0.1.x.md)
+- [0.2.x roadmap](roadmap-0.2.x.md)
+- [示例](../examples/README.md)
