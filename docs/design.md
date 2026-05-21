@@ -1,181 +1,91 @@
 # codonx Design Notes
 
-These notes describe the implementation semantics of `codonx` 0.2.3. They are
-not a language-completeness promise.
+This document records the implementation semantics of `codonx` 0.2.3. It is a
+technical description of the current system, not a language specification.
 
-`codonx` currently has two related but different paths:
+## System Shape
+
+`codonx` has two active execution paths.
 
 ```text
 Codon-first path
-    raw .codon/.codonx-style source
-    -> directive selection
-    -> local AST/span and token-aware lowering
-    -> Python 3.12+ debug output or Codon release output
-    -> optional real codon run/build wrapper
+    source text
+    -> source-line model
+    -> #%define extraction
+    -> target directive selection
+    -> local AST/span and token-aware rewrites
+    -> Python debug projection or Codon release projection
+    -> optional codon run/build subprocess
 
-Python frontend path, experimental
-    Python 3.12 source
-    -> Ruff parser frontend
-    -> CodonX debug view / executable assert IR
+Python frontend path
+    Python 3.12 source text
+    -> Ruff parser
+    -> CodonX debug JSON view
+    -> executable Python assert IR
     -> conservative Codon candidate
-    -> optional real codon run/build wrapper
+    -> optional codon run/build subprocess
 ```
 
-The first path is the practical workflow. The second path is the 0.2.x
-foundation for later Python-to-Codon work.
+The Codon-first path is the established workflow. The Python frontend path is
+the 0.2.x architecture foundation.
 
-## Core Commitments
+## CLI Contract
 
-### Real Codon Remains the Release Authority
+Top-level `--dbg`:
 
-`codonx` does not type-check Codon and does not replace the Codon compiler.
-`codonx run`, `codonx build`, `py-run`, and `py-build` all delegate release
-behavior to a real `codon` binary after preprocessing or candidate generation.
-
-### Debug Output Is a Mismatch Detector
-
-Python debug output exists for normal Python tooling: `pdb`, pytest, IDE
-breakpoints, quick iteration, and runtime guard checks.
-
-It is not a formal equivalence proof. It intentionally does not model Codon
-overload resolution, parallel scheduling, GPU execution, LLVM behavior, C
-pointer semantics, or Python interop conversion details.
-
-### Explicit Differences Beat Silent Guessing
-
-When Python and Codon need different source, the supported expression is a
-target branch:
-
-```python
-#%ifpy
-# Python debug implementation
-#%else
-# Codon release implementation
-#%endif
+```bash
+codonx --dbg input.codon -o input_dbg.py
 ```
 
-or:
+Generates Python debug output. `--assert` controls guard insertion and defaults
+to `shallow`. `--report` writes an optional JSON warning report.
 
-```python
-#%ifcodon
-# Codon release implementation
-#%else
-# Python debug implementation
-#%endif
+Codon projection:
+
+```bash
+codonx codon input.codon -o input_pre.codon
 ```
 
-Comment directives are used because Python parses the whole file before runtime
-branches can help. `if DEBUG:` cannot hide Codon-only syntax from Python's
-parser.
+Generates a selected/preprocessed Codon file and exits.
 
-## Codon-First Pipeline
+Codon subprocess wrappers:
 
-The 0.1.x/0.2.3 Codon-first path is:
-
-```text
-source text
-    -> directive validation and target selection
-    -> local source spans
-    -> whitelist-based local AST/span rewrites
-    -> token-aware transformations that avoid strings/comments
-    -> report diagnostics
-    -> Python debug output or Codon output
+```bash
+codonx run [codon run args...]
+codonx build [codon build args...]
 ```
 
-Important properties:
+These commands locate the first source-file argument, generate a sibling
+`*_pre.codon` file, replace the source argument with that generated file, invoke
+the real `codon` binary, and remove the generated file unless `--keep-pre` is
+set. The Codon binary is resolved from `--codon-bin`, then `CODONX_CODON_BIN`,
+then `codon`.
 
-- Regex is not the semantic authority for rewrites.
-- Rewrites are whitelist-based.
-- Comments and quoted strings are protected from semantic lowering.
-- Transformations are local and non-overlapping.
-- Ambiguous syntax should be preserved or reported, not guessed.
+Check:
 
-The local AST is intentionally not a full Codon AST. It is a rewrite IR for
-constructs `codonx` can safely handle today.
-
-## Python Frontend Pipeline
-
-The 0.2.3 Python path is:
-
-```text
-Python 3.12 source
-    -> Ruff parser frontend
-    -> CodonX debug JSON view, via `codonx ir`
-    -> executable Python assert IR, via `codonx assert-ir`
-    -> conservative Codon candidate, via `codonx py-codon`
+```bash
+codonx check input.codon
 ```
 
-`ir` is a debug dump. It is useful for tests, snapshots, and inspection, but it
-is not the primary user-facing semantic artifact.
+Checks directive structure and generated Python syntax. It is not a Codon type
+checker.
 
-`assert-ir` emits legal Python. It preserves program shape and adds runtime
-guards around supported annotations, annotated assignments, and returns.
+Python frontend commands:
 
-`py-codon` is compile-first:
-
-- parse Python through Ruff;
-- locate imports and macro lines;
-- strip supported `#%` control lines from emitted source;
-- keep `#%codon` imports as native Codon imports;
-- rewrite default Python imports to Codon's `from python import ...` form;
-- preserve the remaining Python/Codon common subset as source text.
-
-This means 0.2.3 can generate useful candidates for simple compatible programs
-and import-heavy fallback experiments. It does not yet perform broad
-statement-level native Codon lowering.
-
-## Import Policy
-
-0.2.x is compatibility-first for Python imports.
-
-Default import:
-
-```python
-import json as pyjson
+```bash
+codonx ir input.py -o input_ir.json
+codonx assert-ir input.py -o input_assert_ir.py
+codonx py-codon input.py -o input_py.codon
+codonx py-run [codon run args...]
+codonx py-build [codon build args...]
 ```
 
-generated candidate:
+`py-run` and `py-build` generate a sibling `*_py.codon` file, invoke `codon run`
+or `codon build`, and remove the generated file unless `--keep-pre` is set.
 
-```python
-from python import json as pyjson
-```
+## Directive Semantics
 
-Default from-import:
-
-```python
-from pathlib import Path
-```
-
-generated candidate shape:
-
-```python
-from python import pathlib as __codonx_py_pathlib
-Path = __codonx_py_pathlib.Path
-```
-
-Native Codon import:
-
-```python
-#%codon
-import math
-```
-
-generated candidate:
-
-```python
-import math
-```
-
-`#%codon` must bind to the immediately following import. Invalid placement is a
-diagnostic condition in the frontend view.
-
-Wildcard from-imports and relative imports that cannot be represented safely are
-not expanded by the 0.2.3 generator; the candidate emits a conservative comment
-instead of guessing.
-
-## Directive and Define Model
-
-Supported target directives:
+Target directives:
 
 ```text
 #%ifpy
@@ -184,127 +94,253 @@ Supported target directives:
 #%endif
 ```
 
-Compatibility directive:
+`#%ifdebug` remains a compatibility alias for `#%ifpy`.
 
-```text
-#%ifdebug
-```
-
-`#%ifdebug` is an alias for `#%ifpy`.
-
-Supported define directives:
+Supported defines:
 
 ```text
 #%define CODON_PYTHON <path>
 #%define CODON_DEBUG <path>
 ```
 
-Unknown define names are errors. `#%define` is not a general macro system.
+Unknown define names are hard errors. `#%define` is not a general macro
+facility.
 
-Codon-first `run` and `build` inject supported define values into the Codon
+`CODON_PYTHON` is injected into wrapped Codon subprocesses. `CODON_DEBUG` is
+used by the Codon-first `run`/`build` path; in debug-mode Codon `run`, codonx
+builds in the debug directory and appends `-log l` unless the user already
+supplied a log-dump option.
+
+The Python frontend also recognizes `#%define CODON_PYTHON` while generating
+Codon candidates. Because this value cannot be embedded as executable Codon, the
+candidate header records it and `py-run` / `py-build` inject it into the Codon
 subprocess environment.
 
-Python-fronted `py-run` and `py-build` generate a temporary Codon candidate,
-inject supported define values, invoke `codon run` or `codon build`, and delete
-the candidate unless `--keep-pre` is set.
+## Codon-First Rewrite Model
 
-`#%define CODON_PYTHON` cannot be embedded as executable Codon code, so generated
-`py-codon` candidates surface it in a header comment and wrappers inject it into
-the process environment.
+The Codon-first path uses a source-line model plus local AST/span and
+token-aware transformations. Regex is not the semantic authority for mechanical
+rewrites.
 
-## Numeric and Type Policy
+Implemented rewrite properties:
 
-The mainline style follows Codon's Python-like syntax:
+- target directives are selected before semantic rewrites;
+- supported `#%define` lines are stripped from generated targets;
+- comments and strings are protected from token-level semantic rewrites;
+- function signatures, class signatures, annotated assignments, assertions,
+  selected casts, and selected multiline spans are handled through local
+  span-aware logic;
+- unsupported or ambiguous constructs should be preserved, warned about, or
+  moved behind explicit target branches.
 
-- prefer `int` for normal integer code;
-- prefer `float` for normal floating-point code;
-- prefer `list[int]`, `dict[str, float]`, and similar high-level containers.
+The local AST is not a complete Codon parser. It is a rewrite-oriented structure
+for the subset currently supported by the debug projection.
 
-Fixed-width types represent explicit low-level intent:
+## Codon-First Guard Coverage
 
-- `i8`, `i16`, `i32`, `i64`;
-- `u8`, `u16`, `u32`, `u64`;
-- `Int[N]`, `UInt[N]`;
-- `f32`, `f64`, `float32`;
-- `byte`.
-
-Python guards can preserve range or shape intent for debug runs. Codon release
-typing is still decided by Codon's compiler.
-
-## Guard Semantics
-
-Guard insertion covers supported function parameters, annotated assignments, and
-return values.
+The Codon-first Python debug path can guard supported function parameters,
+annotated assignments, and return values.
 
 Supported categories include:
 
-- signed and unsigned fixed-width integer ranges;
 - `int`, with `bool` rejected as an integer value;
-- `float` and selected float aliases;
-- `complex`, `bool`, ASCII `str`;
+- fixed-width integer intent: `i8`, `i16`, `i32`, `i64`, `u8`, `u16`, `u32`,
+  `u64`, `Int[N]`, `UInt[N]`, `byte`;
+- `float`, `f32`, `f64`, `float32`, and related lowered float forms;
+- `bool`, `complex`, ASCII `str`;
 - `Optional`, `Union`, softened `Literal`, and `NoneType`;
-- outer container shapes for `list`, `set`, `dict`, and `tuple`;
+- outer container shape checks for `list`, `set`, `dict`, and `tuple`;
 - deeper container element checks under `--assert full`.
 
-Warning categories include unknown guard types, unchecked dynamic types such as
-`pyobj`/`Any`/`object`, float precision risk, dict/set ordering risk, runtime
-`Literal` behavior, and tuple ellipsis mode differences.
+The guard system is diagnostic. It does not implement Codon type checking,
+overload resolution, GPU semantics, parallel race behavior, C pointer semantics,
+LLVM behavior, or Python interop conversion behavior.
 
-Guards should fail loudly for supported mismatch classes. They should not be
-treated as proof that the Codon release path will behave identically.
+## Ruff-Backed IR
 
-## Lowering Policy
+`codonx ir` parses Python 3.12 source through `ruff_python_parser` and emits a
+JSON debug view with schema version `1`.
 
-An automatic rewrite belongs in `codonx` only if it is:
+Current top-level fields:
 
-- local;
-- deterministic;
-- explainable in public docs;
-- testable with small fixtures;
-- safe to fail closed without changing user semantics.
+- `schema_version`;
+- `frontend`;
+- `python_target`;
+- `source_path`;
+- `source_bytes`;
+- `macros`;
+- `nodes`;
+- `diagnostics`.
 
-Examples of acceptable local rewrites:
+Current node fields:
 
-- `from python import sys` to `import sys` in Python debug output;
-- removing `@par` while preserving loop body in Python debug output;
-- lowering `i32` annotation to Python `int` plus an `i32` guard;
-- lowering `static.range(...)` to `range(...)` with a warning.
+- numeric node `id`;
+- `kind`;
+- optional `name`;
+- byte and line `range`;
+- attached macro IDs;
+- optional `import_policy`;
+- import module names;
+- `conversion` status;
+- diagnostic IDs.
 
-Examples that should not be automatic in the current system:
+Current conversion statuses:
 
-- simulating GPU kernels;
-- resolving Codon overloads;
-- translating arbitrary Python packages to native Codon;
-- rewriting pointer, C interop, or LLVM behavior;
-- whole-program type inference.
+- `codon_native`;
+- `guarded`;
+- `fallback`;
+- `unsupported`.
 
-## Platform Policy
+The JSON output is a debug artifact for inspection and testing. The primary
+user-facing semantic artifact for Python debugging is `assert-ir`.
 
-Only Linux is supported.
+## Macro Attachment
 
-This keeps subprocess behavior, Codon compiler assumptions, release packaging,
-and Python 3.12+ debug execution narrow and testable. Non-Linux behavior is not
-intentionally supported.
+All `#%` lines in Python frontend input are collected as macros. The current
+attachment algorithm binds any unbound macro that appears before a parsed node
+to that node when the node is visited.
 
-## 0.2.x Direction
+`#%codon` has defined meaning only for imports. If attached to a non-import
+node, the node receives `invalid-codon-macro-target-import-required`.
 
-The intended direction is:
+This attachment rule is intentionally simple in 0.2.3. Future versions should
+make placement stricter and source ranges clearer before expanding macro
+categories.
+
+## Python Frontend Import Policy
+
+Default import policy is CPython fallback.
+
+```python
+import json as pyjson
+```
+
+generates:
+
+```python
+from python import json as pyjson
+```
+
+Default `from` import:
+
+```python
+from pathlib import Path
+```
+
+generates:
+
+```python
+from python import pathlib as __codonx_py_pathlib
+Path = __codonx_py_pathlib.Path
+```
+
+Native Codon import intent:
+
+```python
+#%codon
+import math
+```
+
+generates:
+
+```python
+import math
+```
+
+For `#%codon` imports, the IR marks `import_policy` as
+`codon_native_required`. Modules outside the current known-native list receive
+an unverified native-import diagnostic.
+
+Wildcard fallback from-imports are not expanded. Relative imports without an
+absolute module are skipped with a conservative generated comment.
+
+## Python Assert IR
+
+`codonx assert-ir` emits executable Python 3.12 code. The original program
+shape is preserved where possible. The generator inserts `assert` statements
+around supported:
+
+- function parameters;
+- annotated assignments;
+- return values.
+
+Current `assert-ir` type recognition is intentionally narrower than the
+Codon-first guard system. It recognizes these annotation families:
+
+- `int`;
+- `float`;
+- `bool`;
+- `str`;
+- `list`;
+- `dict`;
+- `tuple`;
+- `set`.
+
+Unsupported annotation families are preserved without an inserted assert. The
+guard helper returns `True` for unknown type names, but the generator does not
+currently emit guards for unknown families.
+
+Import statements are preserved in assert IR, with comments documenting whether
+the import policy is `codon_native_required` or `python_fallback_default`.
+
+## Codon Candidate Generation
+
+`codonx py-codon` is compile-first, not semantically complete.
+
+Current generator behavior:
+
+- parse source through Ruff;
+- emit a generated-file header;
+- surface `CODON_PYTHON` from `#%define CODON_PYTHON` in a header comment;
+- strip lines whose trimmed form starts with `#%`;
+- preserve `#%codon` imports as normal Codon imports;
+- rewrite unmarked `import` statements to `from python import ...`;
+- rewrite unmarked `from module import name` through a Python module binding;
+- preserve non-import statements as source text.
+
+The generator does not yet perform broad expression lowering, whole-function
+native lowering, type inference, fallback-island generation, or source-map
+reporting.
+
+## Numeric Policy
+
+The preferred mainline annotation style follows Codon's Python-like surface:
+
+- `int`;
+- `float`;
+- `list[int]`;
+- `dict[str, float]`;
+- related high-level container forms.
+
+Fixed-width forms such as `i32`, `u64`, `Int[32]`, `UInt[64]`, and `f32`
+represent explicit low-level intent. The Python debug projection can preserve
+some of that intent through guards, but release typing is still Codon's
+responsibility.
+
+## Non-Goals in 0.2.3
+
+0.2.3 does not provide:
+
+- complete Python-to-Codon translation;
+- complete Codon-to-Python translation;
+- full Codon parsing;
+- whole-program type inference;
+- Codon overload resolution;
+- native AST integration with Codon's compiler internals;
+- simulation of GPU, LLVM, C pointer, JIT, or parallel race semantics;
+- guaranteed semantic equivalence between generated Python debug output and
+  compiled Codon output.
+
+## Implementation Direction
+
+The intended 0.2.x architecture remains:
 
 ```text
 Python source -> Ruff AST -> CodonX IR -> Codon target
 Codon/CodonX source -> CodonX subset parser -> CodonX IR -> Python target
 ```
 
-The central project-owned object should be CodonX IR, not Ruff AST and not
-Codon native AST. Ruff is the Python frontend. Codon remains the release
-compiler. CodonX IR is where macros, diagnostics, guard intent, fallback
-planning, and future bidirectional projection should live.
-
-Near-term work after 0.2.3 should focus on:
-
-- source mapping and diagnostics for generated candidates;
-- safe native lowering for a small, well-tested Python subset;
-- explicit fallback islands instead of hidden performance cliffs;
-- preserving the 0.1.x Codon-first workflow while the Ruff path matures.
-
-Codon native AST/log integration remains out of scope for the current design.
+CodonX IR is the project-owned boundary. Ruff is the Python parser frontend.
+Codon remains the release compiler. Future work should improve source mapping,
+diagnostics, native-subset lowering, and explicit fallback islands without
+weakening the existing Codon-first workflow.

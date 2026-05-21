@@ -1,63 +1,49 @@
 # codonx
 
-> One source of truth between Python's debugging comfort and Codon's release path.
+> A disciplined bridge between Python's inspectability and Codon's release path.
 
-`codonx` exists because the Python-to-Codon story usually starts well and then
-splits in two.
+Python and Codon are close enough to share a development story, but not close
+enough to make semantic differences disappear. In real projects, that gap often
+turns into two source files: one Python file for debugging and one Codon file
+for performance. The cost is drift. The same algorithm slowly becomes two
+programs.
 
-You keep a Python file because it is easy to debug with `pdb`, pytest, IDE
-breakpoints, print probes, and the rest of the Python ecosystem. You keep a
-Codon file because the release path needs Codon's compiler. After a few edits,
-the two files stop being the same program.
-
-`codonx` is a small Linux CLI that tries to keep that split explicit,
-mechanical, and testable.
+`codonx` is a Linux-only command-line tool for keeping that boundary explicit.
+It generates Python-facing debug artifacts, prepares Codon-facing release
+artifacts, and delegates final execution to the real Codon compiler. The design
+principle is conservative: translate only what can be made local, mechanical,
+and testable; expose everything else as a branch, guard, fallback, or diagnostic.
 
 ```text
 Codon-first source
-    -> Python 3.12+ debug file with runtime guards
-    -> Codon release file passed to the real codon compiler
+    -> Python 3.12+ debug projection with optional runtime guards
+    -> Codon release projection compiled by the official codon binary
 
-Python 3.12 source, experimental 0.2.x path
+Python 3.12 source, experimental 0.2.x frontend
     -> Ruff parser frontend
-    -> CodonX debug/semantic IR
-    -> conservative Codon candidate or CPython fallback imports
+    -> CodonX debug view / executable assert IR
+    -> conservative Codon candidate with explicit Python interop fallback
 ```
 
-Current status: **0.2.3 experimental**.
+Current release line: **0.2.3 experimental**.
 
-The stable practical core is still the Codon-first workflow from 0.1.x. The new
-0.2.x line adds a Ruff-backed Python frontend and the first conservative
-`py-codon` bridge. It is not yet a general Python-to-Codon transpiler.
+The production-minded core remains the Codon-first workflow established in
+0.1.x. The 0.2.x line adds the first Ruff-backed Python frontend and a
+compile-first `py-codon` candidate generator. It is an architecture foundation,
+not a claim of complete Python-to-Codon translation.
 
-## What It Feels Like
+## The Contract
 
-Write code that is meant to run under Codon:
+`codonx` is built around four rules.
 
-```python
-def square_sum(xs: list[int]) -> int:
-    total: int = 0
-    for x in xs:
-        total += x * x
-    return total
+- One source should describe the Python/Codon split explicitly.
+- Python debug output should help catch mismatches early, not prove semantic
+  equivalence.
+- Codon release behavior belongs to the official Codon compiler.
+- Automatic lowering must remain conservative, explainable, and test-covered.
 
-print(square_sum([1, 2, 3]))
-```
-
-Debug it as Python:
-
-```bash
-codonx --dbg app.codon -o app_dbg.py
-python3.12 app_dbg.py
-```
-
-Run it through Codon:
-
-```bash
-codonx run -release app.codon
-```
-
-When the two targets need different code, say so in the source:
+When Python and Codon need different code, the difference is written into the
+source:
 
 ```python
 def fill(out: list[int], n: int):
@@ -71,23 +57,22 @@ def fill(out: list[int], n: int):
     #%endif
 ```
 
-The Python debug file keeps the serial loop. The Codon release file keeps the
-`@par` loop. There is no hidden semantic guess.
+The Python projection keeps the serial loop. The Codon projection keeps the
+`@par` loop. The boundary is visible in code review and testable in both
+directions.
 
 ## Requirements
 
-- Linux only.
+- Linux.
 - Python 3.12 or newer.
-- The official `codon` compiler for `codonx run`, `codonx build`, `py-run`, and
+- Official `codon` compiler for `codonx run`, `codonx build`, `py-run`, and
   `py-build`.
-- Rust only when building from source.
+- Rust only when building `codonx` from source.
 
-`codonx` is not a replacement for Codon. It preprocesses, checks, and generates
-files around the real compiler.
+`codonx` is not useful as a standalone compiler. It is a preprocessing and
+projection layer around Python 3.12+ and Codon.
 
 ## Install
-
-Install the Linux x86_64 release binary:
 
 ```bash
 tar -xzf codonx-v0.2.3-x86_64-linux.tar.gz
@@ -101,14 +86,14 @@ Expected output:
 codonx 0.2.3
 ```
 
-Check the external tools:
+Verify the external toolchain:
 
 ```bash
 python3.12 --version
 codon --version
 ```
 
-If Codon is not on `PATH`:
+Use an explicit Codon binary when needed:
 
 ```bash
 codonx --codon-bin /opt/codon/bin/codon run -release app.codon
@@ -120,47 +105,60 @@ or:
 export CODONX_CODON_BIN=/opt/codon/bin/codon
 ```
 
-## Main Workflow: Codon First
+## Codon-First Workflow
 
-Generate Python debug output:
+Start with a Codon-oriented source file:
 
-```bash
-codonx --dbg input.codon -o input_dbg.py
-python3.12 input_dbg.py
+```python
+def square_sum(xs: list[int]) -> int:
+    total: int = 0
+    for x in xs:
+        total += x * x
+    return total
+
+print(square_sum([1, 2, 3]))
 ```
 
-Generate Python debug output with stronger runtime guards:
+Generate a Python debug projection:
 
 ```bash
-codonx --dbg input.codon --assert full -o input_dbg.py --report codonx-report.json
+codonx --dbg app.codon -o app_dbg.py
+python3.12 app_dbg.py
 ```
 
-Generate a preprocessed Codon file:
+Generate a guarded debug projection:
 
 ```bash
-codonx codon input.codon -o input_pre.codon
+codonx --dbg app.codon --assert full -o app_dbg.py --report codonx-report.json
 ```
 
-Run or build through the real Codon compiler:
+Generate a Codon projection without invoking the compiler:
 
 ```bash
-codonx run -release input.codon
-codonx build -release -o dist/app input.codon
+codonx codon app.codon -o app_pre.codon
 ```
 
-Check directive structure and generated Python syntax:
+Run or build through the official Codon compiler:
 
 ```bash
-codonx check input.codon
-codonx check --assert full input.codon
+codonx run -release app.codon
+codonx build -release -o dist/app app.codon
 ```
 
-`check` is not a Codon type checker. Release behavior still belongs to `codon`.
+Validate directive structure and generated Python syntax:
 
-## Experimental Workflow: Python Frontend
+```bash
+codonx check app.codon
+codonx check --assert full app.codon
+```
 
-0.2.x starts the other direction: Python source enters through Ruff's Python
-3.12 parser and becomes CodonX frontend data.
+`check` is not a Codon type checker. It validates the `codonx` preprocessing
+surface; release semantics remain Codon's responsibility.
+
+## Python Frontend Workflow
+
+The 0.2.x frontend begins the reverse direction: Python source enters through
+Ruff's Python 3.12 parser and is represented through CodonX frontend artifacts.
 
 ```bash
 codonx ir app.py -o app_ir.json
@@ -170,30 +168,31 @@ codonx py-run app.py
 codonx py-build app.py
 ```
 
-Current 0.2.3 behavior is deliberately conservative:
+0.2.3 behavior is intentionally narrow.
 
 - `ir` emits a JSON debug dump of the Ruff-backed CodonX view.
-- `assert-ir` emits legal Python code with Codon-facing runtime guards around
-  supported annotations, assignments, and returns.
-- `py-codon` emits a compile-first Codon candidate.
+- `assert-ir` emits executable Python code with guards for supported basic
+  Python annotations: `int`, `float`, `bool`, `str`, `list`, `dict`, `tuple`,
+  and `set`.
+- `py-codon` emits a conservative Codon candidate.
 - `py-run` and `py-build` generate that candidate, inject supported `#%define`
   values into the Codon subprocess, invoke `codon run` or `codon build`, and
   delete the temporary candidate unless `--keep-pre` is set.
 
-Imports are compatibility-first. A normal Python import becomes a Codon Python
-interop import:
+Import handling is compatibility-first. Unmarked Python imports are routed
+through Codon's Python interop:
 
 ```python
 import json as pyjson
 ```
 
-becomes:
+generates:
 
 ```python
 from python import json as pyjson
 ```
 
-If an import must stay native Codon, mark it:
+Native Codon import intent must be explicit:
 
 ```python
 #%codon
@@ -201,12 +200,13 @@ import math
 ```
 
 `#%define CODON_PYTHON /path/to/libpython3.12.so` is surfaced in generated
-candidate headers and automatically injected by `py-run` / `py-build`.
+candidate headers and injected automatically by `py-run` / `py-build`.
 
-This path preserves the remaining Python/Codon common subset. It does not yet
-lower arbitrary Python semantics into native Codon.
+The current generator preserves the remaining Python/Codon common subset as
+source text. It does not yet lower arbitrary Python statements into native Codon
+semantics.
 
-## Source Directives
+## Directives
 
 Target selection:
 
@@ -223,20 +223,17 @@ Compatibility alias:
 #%ifdebug
 ```
 
-`#%ifdebug` still works as an alias for `#%ifpy`, but new code should use
+`#%ifdebug` remains accepted as an alias for `#%ifpy`; new code should use
 `#%ifpy`.
 
-Codon subprocess hooks:
+Codon subprocess configuration:
 
 ```text
 #%define CODON_PYTHON <path>
 #%define CODON_DEBUG <path>
 ```
 
-`CODON_PYTHON` is used for Codon Python interop. `CODON_DEBUG` controls Codon
-debug dump handling for wrapped Codon invocations.
-
-0.2.x Python import intent:
+Python frontend import intent:
 
 ```text
 #%codon
@@ -244,56 +241,50 @@ debug dump handling for wrapped Codon invocations.
 
 `#%codon` must appear immediately before the import it describes.
 
-## Runtime Guards
+## Guard Boundary
 
-The Python debug target can insert guard checks for supported annotations.
+Codon-first Python debug output supports guards for high-level Python-like types
+and explicit low-level Codon intent, including fixed-width integers such as
+`i32`/`u64`, `Int[N]`/`UInt[N]`, selected float aliases, `Optional`, `Union`,
+softened `Literal`, and common container shapes.
 
-Supported intent includes:
+The Ruff-backed `assert-ir` command currently guards only the basic Python
+annotation families listed above. That narrower coverage is intentional in
+0.2.3.
 
-- `int`, `float`, `bool`, `complex`, ASCII `str`.
-- Fixed-width integer intent such as `i32`, `u64`, `Int[32]`, `UInt[64]`, and
-  `byte`.
-- Float aliases such as `f32`, `f64`, and `float32`.
-- `Optional`, `Union`, softened `Literal`, `NoneType`.
-- Outer container shapes for `list`, `set`, `dict`, and `tuple`, with deeper
-  element checks under `--assert full`.
+All guards are mismatch detectors. They do not simulate parallel races, GPU
+execution, LLVM, C pointer behavior, Codon overload resolution, or Python
+interop conversion semantics.
 
-These guards are mismatch detectors. They do not prove Python/Codon
-equivalence, simulate parallel races, model GPU execution, resolve Codon
-overloads, or reproduce Python interop conversion details.
+## Current Fit
 
-## What Is Safe to Expect
+Use `codonx` today for:
 
-Good current use cases:
-
-- Codon-first single-file programs.
+- Codon-first single-file workflows.
+- Python 3.12+ debug projections for Codon-oriented code.
 - Explicit Python/Codon target branches.
-- Python 3.12 debug files with guard checks.
-- Thin wrapping around the real Codon compiler.
-- Early experiments with Python -> Codon candidate generation where fallback is
+- Guarded debug runs that catch common type and shape mismatches.
+- Conservative Python frontend experiments where CPython fallback imports are
   acceptable.
 
-Bad current use cases:
+Do not treat 0.2.3 as:
 
-- Arbitrary Python-to-Codon conversion.
-- Arbitrary Codon-to-Python conversion.
-- Full Codon parsing.
-- Whole-program type inference.
-- Simulation of LLVM, C pointer, GPU, JIT, or parallel race semantics.
-- Treating generated debug output as proof of release equivalence.
+- a general Python-to-Codon transpiler;
+- a general Codon-to-Python transpiler;
+- a full Codon parser;
+- a whole-program type inferencer;
+- an emulator for Codon parallelism, GPU kernels, LLVM, C interop, or JIT
+  behavior.
 
-The project rule is simple: if `codonx` cannot make a local, explainable,
-testable rewrite, it should preserve, warn, or require an explicit branch.
+## Documentation
 
-## More Documentation
-
-- [Chinese README](docs/README.zh-CN.md)
+- [Chinese overview](docs/README.zh-CN.md)
 - [Design notes](docs/design.md)
 - [0.1.x roadmap](docs/roadmap-0.1.x.md)
 - [0.2.x roadmap](docs/roadmap-0.2.x.md)
 - [Examples](examples/README.md)
 
-## Build and Test From Source
+## Build From Source
 
 ```bash
 cargo fmt --all -- --check
